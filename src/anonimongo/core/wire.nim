@@ -130,7 +130,7 @@ proc msgParse*(s: var Streamable, rest = 0): ReplyFormat {.gcsafe.} =
 
 proc prepareQuery*(s: var Streamable, reqId, target, opcode, flags: int32,
     collname: string, nskip, nreturn: int32,
-    query = newbson(), selector = newbson(), compression = cidNoop): int {.gcsafe.} =
+    query = bson(), selector = bson(), compression = cidNoop): int {.gcsafe.} =
   ## Convert and encode the query into stream to be ready for sending
   ## onto TCP wire socket.
   var query = query

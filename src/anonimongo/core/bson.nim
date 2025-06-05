@@ -1080,5 +1080,5 @@ converter ofBinary*(b: BsonBase): seq[byte] =
 converter ofTimestamp*(b: BsonBase): TimestampInternal =
   bsonFetcher(b, bkTimestamp, BsonTimestamp, TimestampInternal)
 
-template bson*(): untyped = bson({})
+template bson*(): untyped = newBson(newOrderedTable[string, BsonBase]())
   ## Convenience for empty bson.

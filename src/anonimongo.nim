@@ -1,14 +1,34 @@
-import tables
-import anonimongo/core/[bson, types, wire]
+import tables, net
+import anonimongo/core/[bson, types, wire, pool]
 import anonimongo/dbops/[aggregation, admmgmt, client, crud, diagnostic,
        freemonitoring, rolemgmt, replication]
 import anonimongo/[changestreams, collections, gridfs]
 
 export tables.pairs
-export bson, types, wire
+export bson, types, wire, pool
 export admmgmt, client, crud, rolemgmt, aggregation, diagnostic,
        freemonitoring, replication
 export changestreams, collections, gridfs
+
+# Type aliases for backward compatibility
+type
+  # Keep original names as aliases to Socket-based generics
+  Mongo* = Mongo[Socket]
+  Database* = Database[Socket] 
+  Collection* = Collection[Socket]
+  Cursor* = Cursor[Socket]
+  Query* = Query[Socket]
+  Pool* = Pool[Socket]
+
+# Backward compatible constructors
+proc newMongo*(host = "localhost", port = 27017, master = true, 
+               poolSize = 64): Mongo =
+  ## Create a thread-safe MongoDB client using Socket connections
+  newMongo[Socket](host, port, master, poolSize)
+
+proc newMongo*(uri: MongoUri, poolSize = 64): Mongo =
+  ## Create a thread-safe MongoDB client from URI using Socket connections
+  newMongo[Socket](uri, poolSize)
 
 ## ==========
 ## Anonimongo
@@ -36,8 +56,8 @@ export changestreams, collections, gridfs
 ## `collections`_ module has read and write operations in there. Various CRUD APIs
 ## are implemented and more will be added after some extensive testings.
 ##
-## The `Mongo`_ object has field of `Pool`_ which handle any asynchronous queries
-## which default to 64 per `Mongo`_ instance.
+## The `Mongo`_ object has a built-in connection `Pool`_ which handles thread-safe
+## connection management with a default pool size of 64 connections per `Mongo`_ instance.
 ##
 ##
 ## `bson`_ module is by default accessible from `anonimongo` module lib itself, but

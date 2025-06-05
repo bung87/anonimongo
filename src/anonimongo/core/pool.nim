@@ -1,175 +1,101 @@
-import deques, math, tables, strformat, sequtils, net
-import sugar, options, times
-import bson, wire, auth, multisock
-import scram/client
+import tables, locks, net, bson, auth, scram/client
 
 export tables.pairs
 
-{.warning[UnusedImport]: off.}
-
-const verbose {.booldefine.} = false
-
 type
-  Connection* {.multisock.} = object
-    ## Connection is an object representation of a single
-    ## asyncsocket and its identifier.
-    socket*: AsyncSocket ## Socket which used for sending/receiving Bson.
-    id*: int ## Identifier which used in pool for socket availability.
+  ConnectionObj*[S] = object
+    socket*: S
+    id*: int
+    poisoned*: bool
+    lock*: Lock
+  Connection*[S] = ptr ConnectionObj[S]
+  PoolObj*[S] = object
+    connections*: TableRef[int, Connection[S]]
+    available*: seq[int]
+    lock*: Lock
+    poisoned*: bool
 
-  Pool* {.multisock.} = ref object
-    ## A single ref object that will live as long Mongo ref-object lives.
-    connections: TableRef[int, Connection[AsyncSocket]] ## Actual pool for keeping connections.
-    available*: Deque[int] ## The deque mechanism to indicate which\
-      ## connection available.
+  Pool*[S] = ptr PoolObj[S]
 
-proc connections*[T: MultiSock](p: Pool[T]): lent TableRef[int, Connection[T]]  =
-  ## Retrieve the connections table.
-  p.connections
-
-proc initConnection*[T: MultiSock](id = 0): Connection[T] =
-  ## Init for a connection.
-  when T is AsyncSocket:
-    result.socket = newAsyncSocket()
-  else:
+proc initConnection*[S](id: int): Connection[S] =
+  result = cast[Connection[S]](allocShared0(sizeof(ConnectionObj[S])))
+  when S is Socket:
     result.socket = newSocket()
   result.id = id
+  initLock(result[].lock)
+  result.poisoned = false
 
-proc contains*[T: MultiSock](p: Pool, i: int): bool =
-  ## Check whether the id available in connections.
-  i in p.connections
+proc initPool*[S](size = 16): Pool[S] =
+  result = cast[Pool[S]](allocShared0(sizeof(PoolObj[S])))
+  initLock(result[].lock)
+  result.connections = newTable[int, Connection[S]]()
+  result.poisoned = false
+  for i in 1..size:
+    let conn = initConnection[S](i)
+    result.connections[i] = conn
+    result.available.add(i)
 
-proc `[]`*[T: MultiSock](p: Pool[T], i: int): lent Connection[T] =
-  ## Retrieve the i-th connection object in a pool.
-  p.connections[i]
+proc getConn*[S](p: Pool[S]): (int, Connection[S]) =
+  acquire(p[].lock)
+  try:
+    while p.available.len > 0:
+      let id = p.available.pop()
+      let conn = p.connections[id]
+      withLock conn[].lock:
+        if not conn.poisoned:
+          result = (id, conn)
+          return
+    # No available connections
+    result = (-1, nil)
+  finally:
+    release(p[].lock)
 
-proc `[]=`*[T: MultiSock](p: Pool, i: int, c: Connection[T]) =
-  ## Set the i-th connection object with c.
-  p.connections[i] = c
+proc endConn*[S](p: Pool[S], id: int) =
+  withLock(p[].lock):
+    p.available.add(id)
 
-proc initPool*[T: MultiSock](size = 16): Pool[T] =
-  ## Init a pool. The size very likely higher than supplied
-  ## pool size, because of deque need to be in size the power of 2.
-  new result
-  let realsize = nextPowerOfTwo size
-  result.connections = newTable[int, Connection[T]](realsize)
-  result.available = initDeque[int](realsize)
-  for i in 1 .. realsize:
-    result[i] = i.initConnection[:T]
-    result.available.addFirst i
+proc connect*[S](p: Pool[S], address: string, port: int) =
+  for id, conn in p.connections:
+    try:
+      when S is Socket:
+        conn.socket.connect(address, Port(port))
+    except:
+      withLock conn[].lock:
+        conn.poisoned = true
 
-proc getConn*(p: Pool[AsyncSocket]): Future[(int, Connection[AsyncSocket])] {.async.} =
-  ## Retrieve a random connection with its id in async. In case
-  ## no available queues in the pool, it will poll whether any
-  ## other connections will be available soon.
-  while true:
-    if p.available.len > 0:
-      let id = p.available.popLast
-      #when not defined(release):
-        #dump id
-      result = (id, p[id])
-      return
-    else:
-      try: poll(100)
-      except ValueError: discard
+proc close*[S](p: Pool[S]) =
+  withLock(p[].lock):
+    p.poisoned = true
+    for _, conn in p.connections:
+      when S is Socket:
+        close(conn.socket)
+      deallocShared(conn)
+  deallocShared(p)
 
-proc getConn*(p: Pool[Socket]): (int, Connection[Socket]) =
-  if p.available.len > 0:
-    let id = p.available.popLast
-    result = (id, p[id])
-    return
-  result = (-1, Connection[Socket]())
-
-proc connect*(p: Pool[AsyncSocket], address: string, port: int): Future[void] {.multisock.} =
-  ## Connect all connection to specified address and port.
-  for i, c in p.connections:
-    await c.socket.connect(address, Port port)
-    when verbose:
-      echo "connection: ", i, " is connected"
-
-proc close*[T: MultiSock](p: Pool[T]) =
-  ## Close all connections in a pool.
-  for _, c in p.connections:
-      when T is AsyncSocket:
-        if not c.socket.isClosed:
-          close c.socket
-          when verbose:
-            echo "connection: ", c.id, " is closed"
-      else:
-          close c.socket
-
-proc endConn*(p: Pool, i: Positive) =
-  ## End a connection and return back the id to available queues.
-  p.available.addFirst i.int
-
-proc authenticate*(p: Pool[AsyncSocket], user, pass: string, T: typedesc = Sha256Digest,
-  dbname = "admin.$cmd"): Future[bool] {.async.} =
-  ## Authenticate all connections in a pool with supplied username,
-  ## password, type which default to SHA256Digest, and database which
-  ## default to "admin". Type receives SHA1Digest as other typedesc.
-  ## Currently this taking too long for large pool connections.
-  result = true
-  var authops = newseq[Future[bool]](p.connections.len)
-  when verbose:
-    dump authops.len
-    dump p.connections.len
-  for i, c in p.connections:
-    when verbose: echo &"conn {i} to auth."
-    authops[i-1] = c.socket.authenticate(user, pass, T, dbname)
-  if anyIt(await all(authops), not it):
-    echo "Some connection failed to authenticate. Failed"
-    result = false
-  else:
-    result = true
-
-proc authenticate*(p: Pool[Socket], user, pass: string, T: typedesc = Sha256Digest,
-  dbname = "admin.$cmd"): bool =
-  ## Authenticate all connections in a pool with supplied username,
-  ## password, type which default to SHA256Digest, and database which
-  ## default to "admin". Type receives SHA1Digest as other typedesc.
-  ## Currently this taking too long for large pool connections.
-  result = true
-  var authops = newseq[bool](p.connections.len)
-  when verbose:
-    dump authops.len
-    dump p.connections.len
-  for i, c in p.connections:
-    when verbose: echo &"conn {i} to auth."
-    authops[i-1] = c.socket.authenticate(user, pass, T, dbname)
-  if anyIt(authops, not it):
-    echo "Some connection failed to authenticate. Failed"
-    result = false
-  else:
-    result = true
+proc authenticate*[S](p: Pool[S], user, pass: string, dbname = "admin.$cmd"): bool =
+  withLock(p[].lock):
+    for _, conn in p.connections:
+      when S is Socket:
+        let res = conn.socket.authenticate(user, pass, Sha256Digest, dbname)
+        if not res:
+          return false
+  true
 
 when isMainModule:
-
-  proc dummy(pool: Pool[AsyncSocket], i: int) {.async.} =
-    echo "spawning: ", i
-    let (cid, conn) = await pool.getConn
-    defer: pool.endConn cid
-    await sleepAsync(200)
-    echo "end conn: ", conn.id
-
-  proc main {.async.} =
-    let poolSize = 16
-    let loopsize = poolsize * 3
-    var pool = initPool[AsyncSocket](poolSize)
-
-    let starttime = cpuTime()
-    var ops = newseq[Future[void]](loopsize)
-    for count in 0 ..< loopSize:
-      #ops[count] = pool.toHandshake(count)
-      ops[count] = pool.dummy(count)
-    try:
-      await all(ops)
-    except CatchableError:
-      echo getCurrentExceptionMsg()
-    when not defined(release):
-      dump pool.available
-    echo "ended loop at: ", cpuTime() - starttime
-
-    close pool
-
-  let start = cpuTime()
-  waitFor main()
-  echo "whole operation: ", cpuTime() - start
+  proc worker(pool: Pool[Socket], id: int) =
+    let (cid, conn) = pool.getConn()
+    if cid != -1:
+      defer: pool.endConn(cid)
+      if not conn.poisoned.load():
+        discard conn.socket.send("PING")
+  
+  proc main() =
+    let pool = initPool[Socket](16)
+    pool.connect("localhost", 27017)
+    var threads: array[16, Thread[tuple[p: Pool[Socket], id: int]]]
+    for i in 0..<16:
+      createThread(threads[i], worker, (pool, i))
+    joinThreads(threads)
+    close(pool)
+  
+  main()
