@@ -1,3 +1,4 @@
+import asyncdispatch
 import strformat, asyncfile, oids, times, sequtils, os
 import mimetypes, sugar
 
@@ -5,7 +6,7 @@ import dbops/[admmgmt]
 import core/[bson, types, wire, utils]
 import collections
 
-import multisock
+
 
 func files(name: string): string = &"{name}.files"
 func chunks(name: string): string = &"{name}.chunks"
@@ -16,8 +17,8 @@ const verbose = defined(verbose)
 const defaultChunkSize: int32 = 255 * 1024 # 255 KB
 const gridEnsured = defined(gridEnsured)
 
-proc createBucket*(db: Database[AsyncSocket], name = "fs", chunkSize = defaultChunkSize):
-  Future[GridFS[AsyncSocket]] {.multisock.} =
+proc createBucket*(db: Database, name = "fs", chunkSize = defaultChunkSize):
+  Future[GridFS[AsyncSocket]] {.async.} =
   ## By default it's using string "fs" for bucket name with default chunk
   ## size for file is 255 KB. The chunk size can be override for each
   ## uploadFile but by default will using the defined gridfs chunk size.
@@ -46,13 +47,13 @@ proc createBucket*(db: Database[AsyncSocket], name = "fs", chunkSize = defaultCh
     result.chunks.createIndex(bson({ files_id: 1, n: 1 }))
   ])
 
-proc createBucket*(c: Collection[AsyncSocket], name = "fs", chunkSize = defaultChunkSize):
-  Future[GridFS[AsyncSocket]] {.multisock.} =
-  ## Collection[AsyncSocket] version to create bucket. Offload the actual operation to
+proc createBucket*(c: Collection, name = "fs", chunkSize = defaultChunkSize):
+  Future[GridFS[AsyncSocket]] {.async.} =
+  ## Collection version to create bucket. Offload the actual operation to
   ## gridfs.createBucket(database).
   result = await c.db.createBucket(name, chunkSize)
 
-proc getBucket*(db: Database[AsyncSocket], name = "fs"): Future[GridFS[AsyncSocket]]{.multisock.} =
+proc getBucket*(db: Database, name = "fs"): Future[GridFS[AsyncSocket]]{.async.} =
   ## Get bucket from existing database. If the bucket is not available,
   ## Mongo will implicitly create the files and chunks collections but
   ## without the necessary indexes.
@@ -69,7 +70,7 @@ proc getBucket*(db: Database[AsyncSocket], name = "fs"): Future[GridFS[AsyncSock
     result.chunkSize = defaultChunkSize
 
 when gridEnsured:
-  proc ensureIndex(g: GridFS[AsyncSocket]) {.multisock.} =
+  proc ensureIndex(g: GridFS[AsyncSocket]) {.async.} =
     let indexes = await all([g.files.listIndexes(), g.chunks.listIndexes()])
     var idxops = newseq[Future[WriteResult]](2)
     if not indexes[0].anyIt( it["name"] == "filename_1_uploadDate_1_" ):
@@ -78,12 +79,12 @@ when gridEnsured:
       idxops[1] = g.chunks.createIndex(bson({ files_id: 1, n: 1 }))
     asyncCheck await idxops.all
 
-proc getBucket*(c: Collection[AsyncSocket], name = "fs"): Future[GridFS[AsyncSocket]]{.multisock.} =
+proc getBucket*(c: Collection, name = "fs"): Future[GridFS[AsyncSocket]]{.async.} =
   result = await c.db.getBucket(name)
   when gridEnsured: await result.ensureIndex
 
 proc uploadFile*(g: GridFS[AsyncSocket], f: AsyncFile, filename = "", chunk = 0'i32,
-  metadata = bson()): Future[WriteResult]{.multisock.} =
+  metadata = bson()): Future[WriteResult]{.async.} =
   let foid = genoid()
   let fsize = getFileSize f
   let chunkSize = if chunk == 0: g.chunkSize else: chunk
@@ -158,7 +159,7 @@ template prepareFile(target: string, mode = fmRead): untyped {.dirty.} =
   defer: close f
 
 proc uploadFile*(g: GridFS[AsyncSocket], filename: string, chunk = 0'i32,
-  metadata = bson()): Future[WriteResult] {.multisock.} =
+  metadata = bson()): Future[WriteResult] {.async.} =
   ## A higher uploadFile which directly open and close file from filename.
   prepareFile(filename)
   let chunksize = if chunk == 0: g.chunkSize else: chunk
@@ -178,7 +179,7 @@ proc uploadFile*(g: GridFS[AsyncSocket], filename: string, chunk = 0'i32,
     metadata = filemetadata, chunk = chunksize)
 
 proc downloadFile*(g: GridFS[AsyncSocket], f: AsyncFile, filename = ""):
-  Future[WriteResult] {.multisock.} =
+  Future[WriteResult] {.async.} =
   ## Download given filename and write it to f asyncfile. This only download
   ## the latest uploaded file in the same name.
   when gridEnsured: await g.ensureIndex
@@ -215,7 +216,7 @@ proc downloadFile*(g: GridFS[AsyncSocket], f: AsyncFile, filename = ""):
     kind: wkSingle)
 
 proc downloadFile*(bucket: GridFS[AsyncSocket], filename: string):
-  Future[WriteResult]{.multisock.} =
+  Future[WriteResult]{.async.} =
   ## Higher version for downloadFile. Ensure the destination file path has
   ## writing permission
   prepareFile(filename, fmWrite)
@@ -223,12 +224,12 @@ proc downloadFile*(bucket: GridFS[AsyncSocket], filename: string):
   result = await bucket.downloadFile(f,  fname & ext)
 
 proc downloadAs*(g: GridFS[AsyncSocket], source, target: string): Future[WriteResult]
-  {.multisock.} =
+  {.async.} =
   ## To download file as different file name.
   prepareFile(target, fmWrite)
   result = await g.downloadFile(f, source)
 
-proc availableFiles*(g: GridFS[AsyncSocket], query = bson()): Future[int] {.multisock.} =
+proc availableFiles*(g: GridFS[AsyncSocket], query = bson()): Future[int] {.async.} =
   result = await g.files.count(query)
 
 template prepareMatcher(m: BsonBase): untyped =
@@ -242,7 +243,7 @@ template prepareMatcher(m: BsonBase): untyped =
   q
 
 proc listFileNames*(g: GridFS[AsyncSocket], matcher = "all".toBson, sort = bson()):
-  Future[seq[string]]{.multisock.} =
+  Future[seq[string]]{.async.} =
   ## Retrieve available list filenames given matcher Bson.
   ## By default the matcher is BsonString "all" which return
   ## all available names. Sort to choose the order which
@@ -273,11 +274,11 @@ template foldWSingle(a, b: untyped): untyped =
     kind: wkSingle,
     reason: &"{a.reason}, {b.reason}")
 
-proc wrNop(g: GridFS[AsyncSocket]): Future[WriteResult] {.multisock.} =
+proc wrNop(g: GridFS[AsyncSocket]): Future[WriteResult] {.async.} =
   result = WriteResult( success: true, kind: wkMany)
 
 proc removeFile*(g: GridFS[AsyncSocket], matcher = "all".toBson, one = false):
-  Future[WriteResult]{.multisock.} =
+  Future[WriteResult]{.async.} =
   ## Remove available files that match with matcher. By default the matcher
   ## is BsonString "all" which remove all files. If it's not "all" and
   ## BsonString, it's matched for the filename and for specific finding,
@@ -323,7 +324,7 @@ proc removeFile*(g: GridFS[AsyncSocket], matcher = "all".toBson, one = false):
     ops[1] = g.chunks.remove(cfiles)
   result = (await all(ops)).foldl(foldWMany(a, b))
 
-proc drop*(g: GridFS[AsyncSocket]): Future[WriteResult]{.multisock.} =
+proc drop*(g: GridFS[AsyncSocket]): Future[WriteResult]{.async.} =
   ## Drop the current bucket name.
   result = foldl(await all([
     g.files.drop(), g.chunks.drop()
@@ -343,7 +344,7 @@ type
     n {.bsonExport.} : int
     data {.bsonExport.}: string ## bytes
 
-  GridStream*{.multisock.} = ref object of RootObj
+  GridStream*{.async.} = ref object of RootObj
     grid: GridFS[AsyncSocket]
     filename: string
     buffered: bool
@@ -361,7 +362,7 @@ func metadata*(gs: GridStream): BsonDocument = gs.info.metadata
 proc close*(gs: GridStream) =
   gs.isClosed = true
 
-proc fetchData(gs: GridStream[AsyncSocket], chunkn: int) {.multisock.} =
+proc fetchData(gs: GridStream[AsyncSocket], chunkn: int) {.async.} =
   var data: BsonDocument
   if gs.buffered and not gs.buffer[chunkn].isNil:
     data = gs.buffer[chunkn]
@@ -374,7 +375,7 @@ proc fetchData(gs: GridStream[AsyncSocket], chunkn: int) {.multisock.} =
 func within(targetpos, chunkpos, chunksize: int64): bool =
   targetpos >= chunkpos and targetpos < (chunkpos + chunksize)
 
-proc setPosition*(gs: GridStream[AsyncSocket], pos: int64, chunkn = -1) {.multisock.} =
+proc setPosition*(gs: GridStream[AsyncSocket], pos: int64, chunkn = -1) {.async.} =
   if pos >= gs.info.length:
     gs.pos = pos-1
   else:
@@ -388,7 +389,7 @@ proc setPosition*(gs: GridStream[AsyncSocket], pos: int64, chunkn = -1) {.multis
 
 func getPosition*(gs: GridStream): int64 = gs.pos
 
-proc read*(gs: GridStream[AsyncSocket], length = 0'i64): Future[string] {.multisock.} =
+proc read*(gs: GridStream[AsyncSocket], length = 0'i64): Future[string] {.async.} =
   if length == 0:
     return
   var reslen = length
@@ -411,12 +412,12 @@ proc read*(gs: GridStream[AsyncSocket], length = 0'i64): Future[string] {.multis
       curread += toread
       await gs.setPosition(gs.pos + toread, gs.data.n + 1)
 
-proc readAll*(gs: GridStream[AsyncSocket]): Future[string] {.multisock.} =
+proc readAll*(gs: GridStream[AsyncSocket]): Future[string] {.async.} =
   let length = gs.info.length - gs.pos
   result = await gs.read(length)
 
 proc getStream*(g: GridFS[AsyncSocket], matcher: BsonBase, sort = bson(),
-  buffered = false): Future[GridStream[AsyncSocket]]{.multisock.} =
+  buffered = false): Future[GridStream[AsyncSocket]]{.async.} =
   new result
   result.grid = g
   result.buffered = buffered

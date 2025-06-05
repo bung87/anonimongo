@@ -1,12 +1,12 @@
-import wire, bson, multisock
+import wire, bson
 import scram/client
-import std/[strformat, net]
+import std/[strformat, net, asyncdispatch]
 import checksums/md5
 
 const verbose {.booldefine.} = false
 
 proc authenticate*(sock: AsyncSocket, user, pass: string,
-  T: typedesc = Sha256Digest, dbname = "admin.$cmd"): Future[bool] {.multisock.} =
+  T: typedesc = Sha256Digest, dbname = "admin.$cmd"): Future[bool] {.async.} =
   ## Authenticate a single asyncsocket based on username and password
   ## and also mechanism for authenticating. Available T for typedesc is
   ## SHA256Digest and SHA1Digest. Default is SHA256Digest and

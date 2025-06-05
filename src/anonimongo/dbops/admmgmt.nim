@@ -1,7 +1,8 @@
+import asyncdispatch
 import std/[strformat, sequtils]
 from std/sugar import `=>`
 import ../core/[types, bson, wire, utils]
-import multisock
+
 
 ## Administration Commands
 ## ***********************
@@ -20,13 +21,13 @@ import multisock
 ##
 ## .. _Mongo command: https://docs.mongodb.com/manual/reference/command/nav-administration/
 
-proc create*(db: Database[AsyncSocket], name: string, capsizemax = (false, 0, 0),
+proc create*(db: Database, name: string, capsizemax = (false, 0, 0),
   storageEngine = bsonNull(),
   validator = bsonNull(), validationLevel = "strict", validationAction = "error",
   indexOptionDefaults = bsonNull(), viewOn = "",
   pipeline = bsonArray(), collation = bsonNull(), writeConcern = bsonNull(),
   expireAfterSeconds = 0, timeseries = bsonNull()):
-  Future[WriteResult] {.multisock.} =
+  Future[WriteResult] {.async.} =
   var q = bson({
     create: name,
   })
@@ -49,9 +50,9 @@ proc create*(db: Database[AsyncSocket], name: string, capsizemax = (false, 0, 0)
   q.addWriteConcern(db, writeConcern)
   result = await db.proceed(q, cmd = ckWrite)
 
-proc createIndexes*(db: Database[AsyncSocket], coll: string, indexes: BsonBase,
+proc createIndexes*(db: Database, coll: string, indexes: BsonBase,
   writeConcern = bsonNull(), commitQuorum = bsonNull(), comment = bsonNull()):
-  Future[WriteResult]{.multisock.} =
+  Future[WriteResult]{.async.} =
   var q = bson({
     createIndexes: coll,
     indexes: indexes,
@@ -61,22 +62,22 @@ proc createIndexes*(db: Database[AsyncSocket], coll: string, indexes: BsonBase,
   q.addOptional("comment", comment)
   result = await db.proceed(q, cmd = ckWrite)
 
-proc dropCollection*(db: Database[AsyncSocket], coll: string, wt = bsonNull(),
-  comment = bsonNull()): Future[WriteResult]{.multisock.} =
+proc dropCollection*(db: Database, coll: string, wt = bsonNull(),
+  comment = bsonNull()): Future[WriteResult]{.async.} =
   var q = bson({ drop: coll })
   q.addWriteConcern(db, wt)
   q.addOptional("comment", comment)
   result = await db.proceed(q, cmd = ckWrite)
 
-proc dropDatabase*(db: Database[AsyncSocket], wt = bsonNull(), comment = bsonNull()):
-  Future[WriteResult]{.multisock.} =
+proc dropDatabase*(db: Database, wt = bsonNull(), comment = bsonNull()):
+  Future[WriteResult]{.async.} =
   var q = bson({ dropDatabase: 1 })
   q.addWriteConcern(db, wt)
   q.addOptional("comment", comment)
   result = await db.proceed(q, cmd = ckWrite)
 
-proc dropIndexes*(db: Database[AsyncSocket], coll: string, indexes: BsonBase,
-  wt = bsonNull(), comment = bsonNull()): Future[WriteResult] {.multisock.} =
+proc dropIndexes*(db: Database, coll: string, indexes: BsonBase,
+  wt = bsonNull(), comment = bsonNull()): Future[WriteResult] {.async.} =
   var q = bson({
     dropIndexes: coll,
     index: indexes,
@@ -84,9 +85,9 @@ proc dropIndexes*(db: Database[AsyncSocket], coll: string, indexes: BsonBase,
   q.addWriteConcern(db, wt)
   result = await db.proceed(q, cmd = ckWrite)
 
-proc listCollections*(db: Database[AsyncSocket], dbname = "", filter = bsonNull(),
+proc listCollections*(db: Database, dbname = "", filter = bsonNull(),
   nameonly = false, authorizedCollections = false, comment = bsonNull()):
-  Future[seq[BsonBase]] {.multisock.} =
+  Future[seq[BsonBase]] {.async.} =
   var q = bson({ listCollections: 1})
   if not filter.isNil:
     q["filter"] = filter
@@ -104,15 +105,15 @@ proc listCollections*(db: Database[AsyncSocket], dbname = "", filter = bsonNull(
   if res.ok:
     result = res["cursor"]["firstBatch"].ofArray
 
-proc listCollectionNames*(db: Database[AsyncSocket], dbname = ""):
-  Future[seq[string]] {.multisock.} =
+proc listCollectionNames*(db: Database, dbname = ""):
+  Future[seq[string]] {.async.} =
   for b in await db.listCollections(dbname):
     var name: string = b["name"]
     result.add name.move
 
 # proc listDatabases*(db: Mongo | Database, filter = bsonNull(), nameonly = false,
-proc listDatabases*(db: Database[AsyncSocket], filter = bsonNull(), nameonly = false,
-  authorizedCollections = false, comment = bsonNull()): Future[seq[BsonBase]] {.multisock.} =
+proc listDatabases*(db: Database, filter = bsonNull(), nameonly = false,
+  authorizedCollections = false, comment = bsonNull()): Future[seq[BsonBase]] {.async.} =
   var q = bson({ listDatabases: 1 })
   q.addOptional("filter", filter)
   q.addConditional("nameOnly", nameonly)
@@ -135,13 +136,13 @@ proc listDatabases*(db: Database[AsyncSocket], filter = bsonNull(), nameonly = f
   else:
     echo res.errmsg
 
-# proc listDatabaseNames*(db: Mongo | Database): Future[seq[string]] {.multisock.} =
-proc listDatabaseNames*(db: Database[AsyncSocket]): Future[seq[string]] {.multisock.} =
+# proc listDatabaseNames*(db: Mongo | Database): Future[seq[string]] {.async.} =
+proc listDatabaseNames*(db: Database): Future[seq[string]] {.async.} =
   for d in await listDatabases(db):
     result.add d["name"]
 
-proc listIndexes*(db: Database[AsyncSocket], coll: string, comment = bsonNull()):
-  Future[seq[BsonBase]]{.multisock.} =
+proc listIndexes*(db: Database, coll: string, comment = bsonNull()):
+  Future[seq[BsonBase]]{.async.} =
   var q = bson({ listIndexes: coll })
   q.addOptional("comment", comment)
   let compression = if db.db.compressions.len > 0: db.db.compressions[0]
@@ -155,9 +156,9 @@ proc listIndexes*(db: Database[AsyncSocket], coll: string, comment = bsonNull())
   if res.ok:
     result = res["cursor"]["firstBatch"]
 
-proc renameCollection*(db: Database[AsyncSocket], `from`, to: string, wt = bsonNull(),
+proc renameCollection*(db: Database, `from`, to: string, wt = bsonNull(),
   comment = bsonNull()):
-  Future[WriteResult] {.multisock.} =
+  Future[WriteResult] {.async.} =
   let source = &"{db.name}.{`from`}"
   let dest = &"{db.name}.{to}"
   var q = bson({
@@ -170,8 +171,8 @@ proc renameCollection*(db: Database[AsyncSocket], `from`, to: string, wt = bsonN
   result = await db.proceed(q, "admin", cmd = ckWrite)
 
 # proc shutdown*(db: Mongo | Database, force = false, timeout = 10,
-proc shutdown*(db: Database[AsyncSocket], force = false, timeout = 10,
-  comment = bsonNull()): Future[WriteResult] {.multisock.} =
+proc shutdown*(db: Database, force = false, timeout = 10,
+  comment = bsonNull()): Future[WriteResult] {.async.} =
   var q = bson({ shutdown: 1, force: force, timeoutSecs: timeout })
   q.addOptional("comment", comment)
   let mdb = db
@@ -185,11 +186,11 @@ proc shutdown*(db: Database[AsyncSocket], force = false, timeout = 10,
     )
 
 proc shutdown*(m: Mongo[AsyncSocket], force = false, timeout = 10,
-  comment = bsonNull()): Future[WriteResult] {.multisock.} =
+  comment = bsonNull()): Future[WriteResult] {.async.} =
   let db = m["admin"]
   result = await db.shutdown(force, timeout, comment)
 
-proc currentOp*(db: Database[AsyncSocket], opt = bson()): Future[BsonDocument]{.multisock.} =
+proc currentOp*(db: Database, opt = bson()): Future[BsonDocument]{.async.} =
   var q = bson({ currentOp: 1})
   for k, v in opt:
     q[k] = v
@@ -202,14 +203,14 @@ proc currentOp*(db: Database[AsyncSocket], opt = bson()): Future[BsonDocument]{.
     return
   result = reply.documents[0]
 
-proc killOp*(db: Database[AsyncSocket], opid: int32, comment = bsonNull()):
-  Future[WriteResult] {.multisock.} =
+proc killOp*(db: Database, opid: int32, comment = bsonNull()):
+  Future[WriteResult] {.async.} =
   var q = bson({ killerOp: 1, op: opid })
   q.addConditional("comment", comment)
   result = await db.proceed(q, "admin", cmd = ckWrite)
 
-# template sendEpilogue(db: Database[AsyncSocket], q: BsonDocument, mode: CommandKind): untyped =
-proc sendEpilogue(db: Database[AsyncSocket], q: BsonDocument, mode: CommandKind): Future[BsonDocument] {.multisock.} =
+# template sendEpilogue(db: Database, q: BsonDocument, mode: CommandKind): untyped =
+proc sendEpilogue(db: Database, q: BsonDocument, mode: CommandKind): Future[BsonDocument] {.async.} =
   let compression = if db.db.compressions.len > 0: db.db.compressions[0]
                     else: cidNoop
   let reply = await sendops(q, db, "admin", cmd = mode, compression = compression)
@@ -220,14 +221,14 @@ proc sendEpilogue(db: Database[AsyncSocket], q: BsonDocument, mode: CommandKind)
     return
   result = reply.documents[0]
 
-proc killCursors*(db: Database[AsyncSocket], collname: string, cursorIds: seq[int64]):
-  Future[BsonDocument] {.multisock.} =
+proc killCursors*(db: Database, collname: string, cursorIds: seq[int64]):
+  Future[BsonDocument] {.async.} =
   let q = bson({ killCursors: collname, cursors: cursorIds.map toBson })
   result = await sendEpilogue(db, q, ckWrite)
 
-proc setDefaultRWConcern*(db: Database[AsyncSocket], defaultReadConcern = bsonNull(),
+proc setDefaultRWConcern*(db: Database, defaultReadConcern = bsonNull(),
   defaultWriteConcern = bsonNull(), wt = bsonNull(), comment = bsonNull()):
-  Future[BsonDocument]{.multisock.} =
+  Future[BsonDocument]{.async.} =
   if all([defaultReadConcern, defaultWriteConcern].map(isNil), (x) => x ):
     result = bsonNull()
     return
@@ -238,7 +239,7 @@ proc setDefaultRWConcern*(db: Database[AsyncSocket], defaultReadConcern = bsonNu
   q.addOptional("comment", comment)
   result = await sendEpilogue(db, q, ckWrite)
 
-proc getDefaultReadConcern*(db: Database[AsyncSocket], inMemory = false, comment = bsonNull()):
-  Future[BsonDocument]{.multisock.} =
+proc getDefaultReadConcern*(db: Database, inMemory = false, comment = bsonNull()):
+  Future[BsonDocument]{.async.} =
   let q = bson { getDefaultReadConcern: 1,  inMemory: inMemory, comment: comment}
   result = await sendEpilogue(db, q, ckRead)

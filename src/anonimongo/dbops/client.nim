@@ -3,7 +3,7 @@ from std/strutils import parseEnum
 import os, net
 
 import ../core/[types, wire, bson, pool, utils]
-import multisock
+
 
 {.warning[UnusedImport]: off.}
 
@@ -33,7 +33,7 @@ else:
   const anonimongoVersion* = "0.7.2-stream"
 
 proc handshake(m: Mongo[AsyncSocket], isMaster: bool, s: AsyncSocket, db: string, id: int32,
-  appname = "Anonimongo client apps"):Future[ReplyFormat] {.multisock.} =
+  appname = "Anonimongo client apps"):Future[ReplyFormat] {.async.} =
   let appname = appname
   let master = if isMaster: 1 else: 0
   var q = bson({
@@ -95,7 +95,7 @@ proc handshakeEach(m: Mongo[Socket], dbname, appname: string): seq[ReplyFormat] 
   for id, c in m.main.pool.connections:
     result.add m.handshake(m.main.isMaster, c.socket, dbname, id.int32, appname)
 
-proc connect*(m: Mongo[AsyncSocket]): Future[bool] {.multisock.} =
+proc connect*(m: Mongo[AsyncSocket]): Future[bool] {.async.} =
   result = await m.connectEach
   if not result: return
   result = true
@@ -122,8 +122,8 @@ proc connect*(m: Mongo[AsyncSocket]): Future[bool] {.multisock.} =
       when verbose: echo "Server support compressions: ", serverCompressions
       m.compressions = serverCompressions
 
-proc cuUsers(db: Database[AsyncSocket], query: BsonDocument):
-  Future[WriteResult] {.multisock.} =
+proc cuUsers(db: Database, query: BsonDocument):
+  Future[WriteResult] {.async.} =
   let dbname = if db.name != "": db.name else: "admin"
   result = await db.proceed(query, dbname, needCompress = false)
 
@@ -159,27 +159,27 @@ template cuPrep(db: Database[Multisock], field, val, pwd: string,
       q["writeConcern"] = db.db.writeConcern
   unown(q)
 
-proc createUser*(db: Database[AsyncSocket], user, pwd: string, roles = bsonArray(),
+proc createUser*(db: Database, user, pwd: string, roles = bsonArray(),
     restrictions = bsonArray(),
     mechanism = bsonArray("SCRAM-SHA-256", "SCRAM-SHA-1"),
     writeConcern = bsonNull(),
-    customData = bsonNull()): Future[WriteResult] {.multisock.} =
+    customData = bsonNull()): Future[WriteResult] {.async.} =
   let q = cuPrep(db, "createUser", user, pwd, roles, restrictions,
     mechanism, writeConcern, customData)
   result = await cuUsers(db, q)
 
-proc updateUser*(db: Database[AsyncSocket], user, pwd: string, roles = bsonArray(),
+proc updateUser*(db: Database, user, pwd: string, roles = bsonArray(),
     restrictions = bsonArray(),
     mechanism = bsonArray("SCRAM-SHA-256", "SCRAM-SHA-1"),
     writeConcern = bsonNull(),
-    customData = bsonNull()): Future[WriteResult] {.multisock.} =
+    customData = bsonNull()): Future[WriteResult] {.async.} =
   let q = cuPrep(db, "updateUser", user, pwd, roles, restrictions,
     mechanism, writeConcern, customData)
   result = await cuUsers(db, q)
 
-proc usersInfo*(db: Database[AsyncSocket], usersInfo: BsonBase, showCredentials = false,
+proc usersInfo*(db: Database, usersInfo: BsonBase, showCredentials = false,
   showPrivileges = false, showAuthenticationRestictions = false,
-  filters = bson(), comment = bsonNull()): Future[BsonDocument]{.multisock.} =
+  filters = bson(), comment = bsonNull()): Future[BsonDocument]{.async.} =
   var q = bson {
     usersInfo: usersInfo
   }
@@ -193,7 +193,7 @@ proc usersInfo*(db: Database[AsyncSocket], usersInfo: BsonBase, showCredentials 
     q["comment"] = comment
   result = await db.crudops(q, cmd = ckRead)
 
-proc dropAllUsersFromDatabase*(db: Database[AsyncSocket]): Future[WriteResult] {.multisock.} =
+proc dropAllUsersFromDatabase*(db: Database): Future[WriteResult] {.async.} =
   let (_, q) = dropPrologue(db, dropAllUsersFromDatabase, 1)
   let compression = if db.db.compressions.len > 0: db.db.compressions[0]
                     else: cidNoop
@@ -215,7 +215,7 @@ proc dropAllUsersFromDatabase*(db: Database[AsyncSocket]): Future[WriteResult] {
     return
   result.n = stat["n"]
 
-proc dropUser*(db: Database[AsyncSocket], user: string): Future[WriteResult] {.multisock.} =
+proc dropUser*(db: Database, user: string): Future[WriteResult] {.async.} =
   let (_, q) = dropPrologue(db, dropUser, user)
   result = await db.proceed(q)
 
@@ -228,10 +228,10 @@ template grantOrRevoke(db: Database[Multisock], op: untyped, user: string,
   q.addWriteConcern(db, writeConcern)
   q
 
-proc grantRolesToUser*(db: Database[AsyncSocket], user: string, roles = bsonArray(),
-  writeConcern = bsonNull()): Future[WriteResult] {.multisock.} =
+proc grantRolesToUser*(db: Database, user: string, roles = bsonArray(),
+  writeConcern = bsonNull()): Future[WriteResult] {.async.} =
   result = await db.proceed(grantOrRevoke(db, grantRolesToUser, user, roles, writeConcern))
 
-proc revokeRolesFromUser*(db: Database[AsyncSocket], user: string, roles = bsonArray(),
-  writeConcern = bsonNull()): Future[WriteResult] {.multisock.} =
+proc revokeRolesFromUser*(db: Database, user: string, roles = bsonArray(),
+  writeConcern = bsonNull()): Future[WriteResult] {.async.} =
   result = await db.proceed(grantOrRevoke(db, revokeRolesFromUser, user, roles, writeConcern))

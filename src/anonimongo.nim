@@ -1,34 +1,17 @@
 import tables, net
 import anonimongo/core/[bson, types, wire, pool]
-import anonimongo/dbops/[aggregation, admmgmt, client, crud, diagnostic,
-       freemonitoring, rolemgmt, replication]
-import anonimongo/[changestreams, collections, gridfs]
+import anonimongo/dbops/[aggregation]
+# TODO: Temporarily disabled until updated for new generic types:
+# diagnostic, admmgmt, client, crud, freemonitoring, rolemgmt, replication
+# import anonimongo/[changestreams, collections, gridfs]
 
 export tables.pairs
 export bson, types, wire, pool
-export admmgmt, client, crud, rolemgmt, aggregation, diagnostic,
-       freemonitoring, replication
-export changestreams, collections, gridfs
+export aggregation
+# TODO: Re-enable when updated: diagnostic, admmgmt, client, crud, rolemgmt, freemonitoring, replication
+# export changestreams, collections, gridfs
 
-# Type aliases for backward compatibility
-type
-  # Keep original names as aliases to Socket-based generics
-  Mongo* = Mongo[Socket]
-  Database* = Database[Socket] 
-  Collection* = Collection[Socket]
-  Cursor* = Cursor[Socket]
-  Query* = Query[Socket]
-  Pool* = Pool[Socket]
 
-# Backward compatible constructors
-proc newMongo*(host = "localhost", port = 27017, master = true, 
-               poolSize = 64): Mongo =
-  ## Create a thread-safe MongoDB client using Socket connections
-  newMongo[Socket](host, port, master, poolSize)
-
-proc newMongo*(uri: MongoUri, poolSize = 64): Mongo =
-  ## Create a thread-safe MongoDB client from URI using Socket connections
-  newMongo[Socket](uri, poolSize)
 
 ## ==========
 ## Anonimongo

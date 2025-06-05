@@ -50,11 +50,11 @@ type
 
   MongoConn* = ptr MongoConnObj
 
-  MongoObj[S] = object
+  MongoObj = object
     hosts: seq[string]
     primary: string
     servers: TableRef[string, MongoConn]
-    pool: Pool[S]
+    pool: Pool[Socket]
     tls: bool
     authenticated: bool
     db: string
@@ -67,7 +67,7 @@ type
     lock: Lock
     poisoned: bool
 
-  Mongo*[S] = ptr MongoObj[S]
+  Mongo* = ptr MongoObj
 
   ReadPreference* {.pure.} = enum
     primary = "primary"
@@ -76,35 +76,35 @@ type
     secondaryPreferred = "secondaryPreferred"
     nearest = "nearest"
 
-  DatabaseObj[S] = object
+  DatabaseObj = object
     name: string
-    db: Mongo[S]
+    db: Mongo
 
-  Database*[S] = ptr DatabaseObj[S]
+  Database* = ptr DatabaseObj
 
-  CollectionObj[S] = object
+  CollectionObj = object
     name: string
     dbname: string
-    db: Database[S]
+    db: Database
 
-  Collection*[S] = ptr CollectionObj[S]
+  Collection* = ptr CollectionObj
 
-  CursorObj[S] = object
+  CursorObj = object
     id: int64
     firstBatch: seq[BsonDocument]
     nextBatch: seq[BsonDocument]
-    db: Database[S]
+    db: Database
     ns: string
     poisoned: bool
 
-  Cursor*[S] = ptr CursorObj[S]
+  Cursor* = ptr CursorObj
 
-  QueryObj[S] = object
+  QueryObj = object
     query: BsonDocument
     sort: BsonBase
     projection: BsonBase
     writeConcern: BsonBase
-    collection: Collection[S]
+    collection: Collection
     skip: int32
     limit: int32
     batchSize: int32
@@ -112,7 +112,7 @@ type
     max: BsonBase
     min: BsonBase
 
-  Query*[S] = ptr QueryObj[S]
+  Query* = ptr QueryObj
 
   WriteKind* = enum
     wkSingle wkMany
@@ -133,10 +133,10 @@ type
     nRemoved*: int
     writeErrors*: seq[string]
 
-  GridFS*[S] = ref object
+  GridFS* = ref object
     name*: string
-    files*: Collection[S]
-    chunks*: Collection[S]
+    files*: Collection
+    chunks*: Collection
     chunkSize*: int32
 
   CommandKind* = enum
@@ -175,12 +175,12 @@ proc close*(conn: MongoConn) {.raises: [].} =
     deallocShared(conn)
 
 # Core Mongo object operations
-proc initMongo*[S](poolSize = poolconn): Mongo[S] =
-  result = cast[Mongo[S]](allocShared0(sizeof(MongoObj[S])))
+proc initMongo*(poolSize = poolconn): Mongo =
+  result = cast[Mongo](allocShared0(sizeof(MongoObj)))
   initLock(result[].lock)
   result.servers = newTable[string, MongoConn]()
   result.query = newTable[string, seq[string]]()
-  result.pool = initPool[S](poolSize)
+  result.pool = initPool[Socket](poolSize)
   result.poisoned = false
   result.authenticated = false
   result.tls = false
@@ -190,30 +190,28 @@ proc initMongo*[S](poolSize = poolconn): Mongo[S] =
   result.flags = QueryFlags({})
   result.compressions = @[]
 
-proc connect*[S](m: Mongo[S], host: string, port: int) =
+proc connect*(m: Mongo, host: string, port: int) =
   withLock m[].lock:
     let key = host & ":" & $port
     if key notin m.servers:
       let conn = newMongoConn(host, port)
       try:
-        when S is Socket:
-          conn.socket.connect(host, Port(port))
+        conn.socket.connect(host, Port(port))
         m.servers[key] = conn
       except OSError as e:
         withLock conn[].lock:
           conn.poisoned = true
         raise newException(MongoError, "Connection failed: " & e.msg)
   # Also connect the pool
-  when S is Socket:
-    m.pool.connect(host, port)
+  m.pool.connect(host, port)
 
-proc authenticate*[S](m: Mongo[S], user, pass: string, dbname = "admin"): bool =
+proc authenticate*(m: Mongo, user, pass: string, dbname = "admin"): bool =
   result = m.pool.authenticate(user, pass, dbname & ".$cmd")
   if result:
     withLock m[].lock:
       m.authenticated = true
 
-proc close*[S](m: Mongo[S]) {.raises: [].} =
+proc close*(m: Mongo) {.raises: [].} =
   withLock m[].lock:
     m.poisoned = true
     for _, conn in m.servers:
@@ -224,47 +222,47 @@ proc close*[S](m: Mongo[S]) {.raises: [].} =
   deallocShared(m)
 
 # Database and Collection management
-proc getDatabase*[S](m: Mongo[S], name: string): Database[S] =
-  result = cast[Database[S]](allocShared0(sizeof(DatabaseObj[S])))
+proc getDatabase*(m: Mongo, name: string): Database =
+  result = cast[Database](allocShared0(sizeof(DatabaseObj)))
   result.db = m
   result.name = name
 
-proc getCollection*[S](db: Database[S], name: string): Collection[S] =
-  result = cast[Collection[S]](allocShared0(sizeof(CollectionObj[S])))
+proc getCollection*(db: Database, name: string): Collection =
+  result = cast[Collection](allocShared0(sizeof(CollectionObj)))
   result.name = name
   result.dbname = db.name
   result.db = db
 
-proc close*[S](db: Database[S]) {.raises: [].} =
+proc close*(db: Database) {.raises: [].} =
   `=destroy`(db[])
   deallocShared(db)
 
-proc close*[S](coll: Collection[S]) {.raises: [].} =
+proc close*(coll: Collection) {.raises: [].} =
   `=destroy`(coll[])
   deallocShared(coll)
 
 # Query operations
-proc query*[S](coll: Collection[S], query: BsonDocument): Query[S] =
-  result = cast[Query[S]](allocShared0(sizeof(QueryObj[S])))
+proc query*(coll: Collection, query: BsonDocument): Query =
+  result = cast[Query](allocShared0(sizeof(QueryObj)))
   result.query = query
   result.collection = coll
   result.batchSize = 101
 
-proc find*[S](q: Query[S]): Cursor[S] {.raises: [MongoError].} =
-  result = cast[Cursor[S]](allocShared0(sizeof(CursorObj[S])))
+proc find*(q: Query): Cursor {.raises: [MongoError].} =
+  result = cast[Cursor](allocShared0(sizeof(CursorObj)))
   result.poisoned = false
   result.firstBatch = @[]
   result.id = 0
   result.ns = q.collection.dbname & "." & q.collection.name
   result.db = q.collection.db
 
-proc next*[S](c: Cursor[S]): seq[BsonDocument] {.raises: [MongoError].} =
+proc next*(c: Cursor): seq[BsonDocument] {.raises: [MongoError].} =
   if c.id != 0 and not c.poisoned:
     c.nextBatch = @[]
     c.id = 0
   result = c.nextBatch
 
-proc close*[S](c: Cursor[S]) {.raises: [].} =
+proc close*(c: Cursor) {.raises: [].} =
   if not c.poisoned:
     c.id = 0
     c.poisoned = true
@@ -272,20 +270,20 @@ proc close*[S](c: Cursor[S]) {.raises: [].} =
   deallocShared(c)
 
 # Connection pool integration
-proc getConn*[S](m: Mongo[S]): (int, Connection[S]) =
+proc getConn*(m: Mongo): (int, Connection[Socket]) =
   withLock m[].lock:
     if m.poisoned:
       return (-1, nil)
   result = m.pool.getConn()
 
-proc endConn*[S](m: Mongo[S], id: int) =
+proc endConn*(m: Mongo, id: int) =
   var isPoisoned: bool
   withLock m[].lock:
     isPoisoned = m.poisoned
   if not isPoisoned and not m.pool.isNil:
     m.pool.endConn(id)
 
-template withConnection*[S](m: Mongo[S], conn: untyped, body: untyped) =
+template withConnection*(m: Mongo, conn: untyped, body: untyped) =
   block:
     let (id, conn) = m.getConn()
     if id != -1 and not conn.isNil:
@@ -299,42 +297,42 @@ template withConnection*[S](m: Mongo[S], conn: untyped, body: untyped) =
           m.endConn(id)
 
 # Constructors
-proc newMongo*[S](host = "localhost", port = 27017, master = true,
-                  poolSize = poolconn): Mongo[S] =
-  result = initMongo[S](poolSize)
+proc newMongo*(host = "localhost", port = 27017, master = true,
+                  poolSize = poolconn): Mongo =
+  result = initMongo(poolSize)
   result.connect(host, port)
 
-proc newMongo*[S](uri: MongoUri, poolSize = poolconn): Mongo[S] =
+proc newMongo*(uri: MongoUri, poolSize = poolconn): Mongo =
   let uriStr = uri.string
   let parsed = parseUri(uriStr)
   let host = if parsed.hostname != "": parsed.hostname else: "localhost"
   let port = if parsed.port != "": parsed.port.parseInt else: 27017
-  result = newMongo[S](host, port, poolSize = poolSize)
+  result = newMongo(host, port, poolSize = poolSize)
 
 # Property accessors using locks
-proc authenticated*[S](m: Mongo[S]): bool =
+proc authenticated*(m: Mongo): bool =
   withLock m[].lock:
     result = m.authenticated
 
-proc tls*[S](m: Mongo[S]): bool =
+proc tls*(m: Mongo): bool =
   withLock m[].lock:
     result = m.tls
 
-proc readPreference*[S](m: Mongo[S]): ReadPreference =
+proc readPreference*(m: Mongo): ReadPreference =
   withLock m[].lock:
     result = m.readPreference
 
-proc retryableWrites*[S](m: Mongo[S]): bool =
+proc retryableWrites*(m: Mongo): bool =
   withLock m[].lock:
     result = m.retryableWrites
 
-proc setReadPreference*[S](m: Mongo[S], pref: ReadPreference) =
+proc setReadPreference*(m: Mongo, pref: ReadPreference) =
   withLock m[].lock:
     m.readPreference = pref
 
 # GridFS support
-proc newGridFS*[S](db: Database[S], name = "fs"): GridFS[S] =
-  result = GridFS[S](
+proc newGridFS*(db: Database, name = "fs"): GridFS =
+  result = GridFS(
     name: name,
     files: db.getCollection(name & ".files"),
     chunks: db.getCollection(name & ".chunks"),
@@ -342,12 +340,12 @@ proc newGridFS*[S](db: Database[S], name = "fs"): GridFS[S] =
   )
 
 # Utility functions
-proc dbname*[S](db: Database[S]): string = db.name
-proc dbname*[S](coll: Collection[S]): string = coll.dbname
-proc collname*[S](coll: Collection[S]): string = coll.name
+proc dbname*(db: Database): string = db.name
+proc dbname*(coll: Collection): string = coll.dbname
+proc collname*(coll: Collection): string = coll.name
 
 # Connection selection methods for compatibility
-proc main*[S](m: Mongo[S]): MongoConn =
+proc main*(m: Mongo): MongoConn =
   ## Get the primary connection
   withLock m[].lock:
     if m.primary == "":
@@ -359,7 +357,7 @@ proc main*[S](m: Mongo[S]): MongoConn =
       if m.primary in m.servers:
         return m.servers[m.primary]
 
-proc mainPreferred*[S](m: Mongo[S]): MongoConn =
+proc mainPreferred*(m: Mongo): MongoConn =
   ## Get primary-preferred connection
   result = m.main()
   if result.isNil:
@@ -377,7 +375,7 @@ proc mainPreferred*[S](m: Mongo[S]): MongoConn =
               if not conn.poisoned:
                 return conn
 
-proc secondary*[S](m: Mongo[S]): MongoConn =
+proc secondary*(m: Mongo): MongoConn =
   ## Get secondary connection
   withLock m[].lock:
     for hostname, conn in m.servers:
@@ -386,17 +384,17 @@ proc secondary*[S](m: Mongo[S]): MongoConn =
           if not conn.poisoned:
             return conn
 
-proc secondaryPreferred*[S](m: Mongo[S]): MongoConn =
+proc secondaryPreferred*(m: Mongo): MongoConn =
   ## Get secondary-preferred connection
   result = m.secondary()
   if result.isNil:
     result = m.main()
 
 # Database/Collection accessors
-proc `[]`*[S](m: Mongo[S], name: string): Database[S] =
+proc `[]`*(m: Mongo, name: string): Database =
   m.getDatabase(name)
 
-proc `[]`*[S](db: Database[S], name: string): Collection[S] =
+proc `[]`*(db: Database, name: string): Collection =
   db.getCollection(name)
 
 # Helper to convert MongoUri from string

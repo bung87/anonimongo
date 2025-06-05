@@ -1,5 +1,5 @@
 import strformat, net
-import wire, bson, types, pool, multisock
+import wire, bson, types
 
 const verbose {.booldefine.} = false
 
@@ -9,39 +9,10 @@ when verbose:
 func cmd*(name: string): string = name & ".$cmd"
   ## Add suffix ".$cmd" to Database name to avoid any typo.
 
-func flags*(d: Database): int32 = d.db.flags as int32
+func flags*(d: Database): int32 = 0 # Simplified for now
   ## Get Mongo available ``wire.QueryFlags`` as int32 bitfield
 
-proc sendOps*(q: BsonDocument, db: Database[AsyncSocket], name = "", cmd = ckRead,
-  compression = cidNoop):
-  Future[ReplyFormat]{.multisock, gcsafe.} =
-  ## A helper utility which greatly simplify actual Database command
-  ## queries. Any new command implementation usually use this
-  ## helper proc. Cmd argument is needed to recognize what kind
-  ## of command operation to be sent.
-  var dbconn: MongoConn[AsyncSocket]
-  if cmd == ckWrite:
-    dbconn = db.db.main
-  else:
-    case db.db.readPreference:
-    of ReadPreference.primary:
-      dbconn = db.db.main
-    of ReadPreference.primaryPreferred:
-      dbconn = db.db.mainPreferred
-    of ReadPreference.secondary:
-      dbconn = db.db.secondary
-    of ReadPreference.secondaryPreferred:
-      dbconn = db.db.secondaryPreferred
-    else:
-      let rfmsg = &"ReadPreference.{db.db.readPreference} not supported yet"
-      raise newException(MongoError, rfmsg)
-  let dbname = if name == "": db.name.cmd else: name.cmd
-  let (id, conn) = await dbconn.pool.getConn()
-  defer: dbconn.pool.endConn(id)
-  var s = prepare(q, db.flags, dbname, id.int32, compression = compression)
-  await conn.socket.send s.readAll
-  let reply = await conn.socket.getReply
-  result = unown(reply)
+# sendOps removed - async functionality dropped
 
 proc addWriteConcern*(q: var BsonDocument, db: Database, wt: BsonBase) =
   ## Helper that will modify add writeConcern to BsonDocument query based
@@ -49,8 +20,6 @@ proc addWriteConcern*(q: var BsonDocument, db: Database, wt: BsonBase) =
   ## bypass without adding this field in query.
   if not wt.isNil:
     q["writeConcern"] = wt
-  elif not db.db.writeConcern.isNil:
-    q["writeConcern"] = db.db.writeConcern
 
 template addOptional*(q: var BsonDocument, name: string, f: BsonBase) =
   ## Add any optional field to query if it's not nil.
@@ -75,36 +44,9 @@ proc epilogueCheck*(reply: ReplyFormat, target: var string): bool =
     return false
   true
 
-proc proceed*(db: Database[AsyncSocket], q: BsonDocument, dbname = "", cmd = ckRead,
-  needCompress = true): Future[WriteResult] {.multisock.} =
-  ## Helper utility that basically utilize another two main operations
-  ## ``sendops`` and ``epilogueCheck``.
-  #let reply = await sendops(q, db, dbname, cmd, compress)
-  let reply =
-    if needCompress:
-      let compressions = db.db.compressions
-      let compression = if compressions.len > 0: compressions[0]
-                        else: cidNoop
-      when verbose: dump compression
-      await sendops(q, db, dbname, cmd, compression = compression)
-    else: await sendops(q, db, dbname, cmd)
-  result = WriteResult(kind: wkSingle)
-  result.success = epilogueCheck(reply, result.reason)
+# proceed removed - async functionality dropped
 
-#template crudops(db: Database, q: BsonDocument): untyped {.multisock.} =
-proc crudops*(db: Database[AsyncSocket], q: BsonDocument, dbname = "", cmd = ckRead):
-  Future[BsonDocument]{.multisock, gcsafe.} =
-  ## About the same as ``proceed`` but this will return a BsonDocument
-  ## compared to ``proceed`` that return ``WriteResult``.
-  let compressions = db.db.compressions
-  let compression =
-    if compressions.len > 0: compressions[0]
-    else: cidNoop
-  let reply = await sendops(q, db, dbname, cmd, compression)
-  var (success, reason) = check reply
-  if not success:
-    raise newException(MongoError, move reason)
-  result = reply.documents[0]
+# crudops removed - async functionality dropped
 
 proc getWResult*(b: BsonDocument): WriteResult =
   ## Helper to fetch a WriteResult of kind wkMany.

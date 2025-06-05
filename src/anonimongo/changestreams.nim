@@ -1,10 +1,11 @@
+import asyncdispatch
 import oids
 from sequtils import concat, map, mapIt
 
 import anonimongo/core/[bson, types, wire]
 import anonimongo/dbops/[aggregation, crud]
 
-import multisock
+
 
 const csVerbose = defined(changeStreamVerbose)
 
@@ -36,7 +37,7 @@ type
     documentKey*: DocumentKey
 
 proc forEach*(c: Cursor[AsyncSocket], cb: proc(b: ChangeStream),
-  stopWhen: set[ChangeStreamEvent]): Future[void] {.multisock.} =
+  stopWhen: set[ChangeStreamEvent]): Future[void] {.async.} =
   let db = c.db
   var c = c
   let collname = c.collname
@@ -67,8 +68,8 @@ proc forEach*(c: Cursor[AsyncSocket], cb: proc(b: ChangeStream),
         break always
       c = forEachReply["cursor"].ofEmbedded.toCursor[:AsyncSocket]
 
-proc watch*(coll: Collection[AsyncSocket], pipelines: seq[BsonDocument] = @[],
-  options = bson()): Future[Cursor[AsyncSocket]] {.multisock.} =
+proc watch*(coll: Collection, pipelines: seq[BsonDocument] = @[],
+  options = bson()): Future[Cursor[AsyncSocket]] {.async.} =
   var queries = newseq[BsonDocument](pipelines.len+1)
   queries[0] = bson { "$changeStream": options }
   queries = concat(queries, pipelines)

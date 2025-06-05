@@ -1,7 +1,7 @@
 import tables, sequtils, asyncdispatch
 import ../core/[bson, types, wire, utils]
 import diagnostic
-import multisock
+
 
 ## Query and Write Operation Commands
 ## **********************************
@@ -29,14 +29,14 @@ import multisock
 ##
 ## __ here_
 
-proc find*(db: Database[AsyncSocket], coll: string,query = bson(),
+proc find*(db: Database, coll: string,query = bson(),
   sort = bsonNull(), selector = bsonNull(), hint = bsonNull(),
   skip = 0, limit = 0, batchSize = 101, singleBatch = false, comment = "",
   maxTimeMS = 0, readConcern = bsonNull(),
   max = bsonNull(), min = bsonNull(), returnKey = false, showRecordId = false,
   tailable = false, awaitData = false, oplogReplay = false,
   noCursorTimeout = false, partial = false,
-  collation = bsonNull(), explain = ""): Future[BsonDocument]{.multisock, gcsafe.} =
+  collation = bsonNull(), explain = ""): Future[BsonDocument]{.async.} =
   var q = bson({ find: coll, filter: query })
   for field, val in {
     "sort": sort,
@@ -70,8 +70,8 @@ proc find*(db: Database[AsyncSocket], coll: string,query = bson(),
   if explain != "": result = await db.explain(q, explain)
   else: result = await crudops(db, q)
 
-proc getMore*(db: Database[AsyncSocket], cursorId: int64, collname: string, batchSize: int,
-  maxTimeMS = -1): Future[BsonDocument]{.multisock.} =
+proc getMore*(db: Database, cursorId: int64, collname: string, batchSize: int,
+  maxTimeMS = -1): Future[BsonDocument]{.async.} =
   var q = bson({
     getMore: cursorId,
     collection: collname,
@@ -82,9 +82,9 @@ proc getMore*(db: Database[AsyncSocket], cursorId: int64, collname: string, batc
     q["maxTimeMS"] = maxTimeMS
   result = await db.crudops(q)
 
-proc insert*(db: Database[AsyncSocket], coll: string, documents: seq[BsonDocument],
+proc insert*(db: Database, coll: string, documents: seq[BsonDocument],
   ordered = true, wt = bsonNull(), bypass = false, explain = ""):
-  Future[BsonDocument] {.multisock.} =
+  Future[BsonDocument] {.async.} =
   var q = bson({
     insert: coll,
     documents: documents.map(toBson),
@@ -95,9 +95,9 @@ proc insert*(db: Database[AsyncSocket], coll: string, documents: seq[BsonDocumen
   if explain != "": result = await db.explain(q, explain, command = ckWrite)
   else: result = await db.crudops(q, cmd = ckWrite)
 
-proc delete*(db: Database[AsyncSocket], coll: string, deletes: seq[BsonDocument],
+proc delete*(db: Database, coll: string, deletes: seq[BsonDocument],
   ordered = true, wt = bsonNull(), explain = ""):
-  Future[BsonDocument]{.multisock.} =
+  Future[BsonDocument]{.async.} =
   var q = bson({
     delete: coll,
     deletes: deletes.map toBson,
@@ -107,9 +107,9 @@ proc delete*(db: Database[AsyncSocket], coll: string, deletes: seq[BsonDocument]
   if explain != "": result = await db.explain(q, explain, command = ckWrite)
   else: result = await db.crudops(q, cmd = ckWrite)
 
-proc update*(db: Database[AsyncSocket], coll: string, updates: seq[BsonDocument],
+proc update*(db: Database, coll: string, updates: seq[BsonDocument],
   ordered = true, wt = bsonNull(), bypass = false, explain = ""):
-  Future[BsonDocument]{.multisock.} =
+  Future[BsonDocument]{.async.} =
   var q = bson({
     update: coll,
     updates: updates.map toBson,
@@ -120,11 +120,11 @@ proc update*(db: Database[AsyncSocket], coll: string, updates: seq[BsonDocument]
   if explain != "": result = await db.explain(q, explain, command = ckWrite)
   else: result = await db.crudops(q, cmd = ckWrite)
 
-proc findAndModify*(db: Database[AsyncSocket], coll: string, query = bson(),
+proc findAndModify*(db: Database, coll: string, query = bson(),
   sort = bsonNull(), remove = false, update = bsonNull(),
   `new` = false, fields = bsonNull(), upsert = false, bypass = false,
   wt = bsonNull(), collation = bsonNull(),
-  arrayFilters: seq[BsonDocument] = @[], explain = ""): Future[BsonDocument]{.multisock.} =
+  arrayFilters: seq[BsonDocument] = @[], explain = ""): Future[BsonDocument]{.async.} =
   var q = bson({
     findAndModify: coll,
     query: query,
@@ -144,7 +144,7 @@ proc findAndModify*(db: Database[AsyncSocket], coll: string, query = bson(),
   if explain != "": result = await db.explain(q, explain, command = ckWrite)
   else: result = await db.crudops(q, cmd = ckWrite)
 
-proc getLastError*(db: Database[AsyncSocket], opt = bson()): Future[BsonDocument]{.multisock.} =
+proc getLastError*(db: Database, opt = bson()): Future[BsonDocument]{.async.} =
   var q = bson({ getLastError: 1 })
   for k, v in opt:
     var kk = k

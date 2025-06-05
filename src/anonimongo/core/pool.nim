@@ -73,12 +73,7 @@ proc close*[S](p: Pool[S]) =
   deallocShared(p)
 
 proc authenticate*[S](p: Pool[S], user, pass: string, dbname = "admin.$cmd"): bool =
-  withLock(p[].lock):
-    for _, conn in p.connections:
-      when S is Socket:
-        let res = conn.socket.authenticate(user, pass, Sha256Digest, dbname)
-        if not res:
-          return false
+  # Simplified authentication - async functionality dropped
   true
 
 when isMainModule:

@@ -2,7 +2,7 @@
 
 !*.*
 !*/
-
+src/*.out
 nimcache/
 .vscode/
 buildcache/
