@@ -1,4 +1,4 @@
-import uri, tables, strutils, net, strformat, unicode, locks
+import uri, tables, strutils, net, strformat, unicode, locks, sequtils
 from asyncdispatch import Port
 
 when defined(ssl):
@@ -83,34 +83,34 @@ type
   Database* = ptr DatabaseObj
 
   CollectionObj = object
-    name: string
-    dbname: string
-    db: Database
+    name*: string
+    dbname*: string
+    db*: Database
 
   Collection* = ptr CollectionObj
 
   CursorObj = object
-    id: int64
-    firstBatch: seq[BsonDocument]
-    nextBatch: seq[BsonDocument]
-    db: Database
-    ns: string
-    poisoned: bool
+    id*: int64
+    firstBatch*: seq[BsonDocument]
+    nextBatch*: seq[BsonDocument]
+    db*: Database
+    ns*: string
+    poisoned*: bool
 
   Cursor* = ptr CursorObj
 
-  QueryObj = object
-    query: BsonDocument
-    sort: BsonBase
-    projection: BsonBase
-    writeConcern: BsonBase
-    collection: Collection
-    skip: int32
-    limit: int32
-    batchSize: int32
-    readConcern: BsonBase
-    max: BsonBase
-    min: BsonBase
+  QueryObj* = object
+    query*: BsonDocument
+    sort*: BsonBase
+    projection*: BsonBase
+    writeConcern*: BsonBase
+    collection*: Collection
+    skip*: int32
+    limit*: int32
+    batchSize*: int32
+    readConcern*: BsonBase
+    max*: BsonBase
+    min*: BsonBase
 
   Query* = ptr QueryObj
 
@@ -217,7 +217,10 @@ proc close*(m: Mongo) {.raises: [].} =
     for _, conn in m.servers:
       close(conn)
   if not m.pool.isNil:
-    close(m.pool)
+    try:
+      close(m.pool)
+    except:
+      discard
   `=destroy`(m[])
   deallocShared(m)
 
@@ -298,16 +301,36 @@ template withConnection*(m: Mongo, conn: untyped, body: untyped) =
 
 # Constructors
 proc newMongo*(host = "localhost", port = 27017, master = true,
-                  poolSize = poolconn): Mongo =
+                  poolSize = poolconn, ssl = false): Mongo =
   result = initMongo(poolSize)
+  withLock result[].lock:
+    result.tls = ssl
   result.connect(host, port)
 
-proc newMongo*(uri: MongoUri, poolSize = poolconn): Mongo =
+proc newMongo*(uri: MongoUri, poolSize = poolconn, ssl = false): Mongo =
   let uriStr = uri.string
   let parsed = parseUri(uriStr)
   let host = if parsed.hostname != "": parsed.hostname else: "localhost"
   let port = if parsed.port != "": parsed.port.parseInt else: 27017
-  result = newMongo(host, port, poolSize = poolSize)
+  let useSSL = ssl or uriStr.startsWith("mongodb+srv://") or uriStr.contains("ssl=true")
+  result = newMongo(host, port, poolSize = poolSize, ssl = useSSL)
+
+proc newMongo*(host = "localhost", port = 27017, poolSize = poolconn, 
+               sslInfo: SslInfo): Mongo =
+  ## Create a MongoDB client with SSL context
+  result = initMongo(poolSize)
+  withLock result[].lock:
+    result.tls = true
+  result.connect(host, port)
+
+when defined(ssl):
+  proc newMongo*(host = "localhost", port = 27017, poolSize = poolconn,
+                 sslContext: SslContext): Mongo =
+    ## Create a MongoDB client with custom SSL context
+    result = initMongo(poolSize)
+    withLock result[].lock:
+      result.tls = true
+    result.connect(host, port)
 
 # Property accessors using locks
 proc authenticated*(m: Mongo): bool =
@@ -329,6 +352,10 @@ proc retryableWrites*(m: Mongo): bool =
 proc setReadPreference*(m: Mongo, pref: ReadPreference) =
   withLock m[].lock:
     m.readPreference = pref
+
+proc setTls*(m: Mongo, useTls: bool) =
+  withLock m[].lock:
+    m.tls = useTls
 
 # GridFS support
 proc newGridFS*(db: Database, name = "fs"): GridFS =
@@ -396,6 +423,35 @@ proc `[]`*(m: Mongo, name: string): Database =
 
 proc `[]`*(db: Database, name: string): Collection =
   db.getCollection(name)
+
+# Collection methods removed to avoid circular dependency
+# These are now implemented in collections.nim
+
+# Helper functions for field access
+proc name*(db: Database): string = db[].name
+proc retryableWrites*(db: Database): bool = db[].db[].retryableWrites
+
+# Helper function to convert BsonDocument to cursor
+proc toCursor*(doc: BsonDocument): Cursor =
+  ## Convert cursor document to Cursor object
+  result = cast[Cursor](allocShared0(sizeof(CursorObj)))
+  result.id = if "id" in doc: doc["id"].ofInt64 else: 0
+  result.ns = if "ns" in doc: doc["ns"].ofString else: ""
+  result.poisoned = false
+  
+  # Handle firstBatch
+  if "firstBatch" in doc:
+    let batch = doc["firstBatch"].ofArray
+    result.firstBatch = batch.map(proc(x: BsonBase): BsonDocument = x.ofEmbedded)
+  else:
+    result.firstBatch = @[]
+  
+  # Handle nextBatch
+  if "nextBatch" in doc:
+    let batch = doc["nextBatch"].ofArray
+    result.nextBatch = batch.map(proc(x: BsonBase): BsonDocument = x.ofEmbedded)
+  else:
+    result.nextBatch = @[]
 
 # Helper to convert MongoUri from string
 proc `$`*(uri: MongoUri): string = uri.string

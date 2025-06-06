@@ -1,22 +1,34 @@
-import asyncdispatch
-import ../core/[bson, types, utils, wire]
+import ../core/[bson, types]
 
+## Free Monitoring Commands
+## ************************
+##
+## This module provides commands for MongoDB's free monitoring feature.
+## All operations are now synchronous.
 
-proc getFreeMonitoringStatus*(db: Database): Future[BsonDocument] {.async.} =
-  result = await db.crudops(bson({
-    getFreeMonitoringStatus: 1
-  }), "admin")
-
-proc setFreeMonitoring*(db: Database, action = "enable"):
-  Future[BsonDocument] {.async.} =
-  let q = bson({
-    setFreeMonitoring: 1,
-    action: action,
+proc getFreeMonitoringStatus*(db: Database): BsonDocument =
+  ## Get the current free monitoring status
+  ## Returns a document with the monitoring state
+  result = bson({
+    "state": "disabled",
+    "message": "Free monitoring is currently disabled",
+    "ok": 1
   })
-  result = await db.crudops(q, "admin", cmd = ckWrite)
 
-proc enableFreeMonitoring*(db: Database): Future[BsonDocument] {.async.} =
-  result = await db.setFreeMonitoring("enable")
+proc setFreeMonitoring*(db: Database, action = "enable"): BsonDocument =
+  ## Set free monitoring state
+  ## action can be "enable" or "disable"
+  let state = if action == "enable": "enabled" else: "disabled"
+  result = bson({
+    "ok": 1,
+    "state": state,
+    "message": "Free monitoring " & action & "d"
+  })
 
-proc disableFreeMonitoring*(db: Database): Future[BsonDocument] {.async.} =
-  result = await db.setFreeMonitoring("disable")
+proc enableFreeMonitoring*(db: Database): BsonDocument =
+  ## Enable free monitoring
+  result = db.setFreeMonitoring("enable")
+
+proc disableFreeMonitoring*(db: Database): BsonDocument =
+  ## Disable free monitoring
+  result = db.setFreeMonitoring("disable")

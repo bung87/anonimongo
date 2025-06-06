@@ -1,15 +1,16 @@
 import tables, net
 import anonimongo/core/[bson, types, wire, pool]
-import anonimongo/dbops/[aggregation]
+import anonimongo/dbops/[aggregation, crud]
+import anonimongo/[collections]
 # TODO: Temporarily disabled until updated for new generic types:
-# diagnostic, admmgmt, client, crud, freemonitoring, rolemgmt, replication
-# import anonimongo/[changestreams, collections, gridfs]
+# diagnostic, admmgmt, client, freemonitoring, rolemgmt, replication
+# import anonimongo/[changestreams, gridfs]
 
 export tables.pairs
 export bson, types, wire, pool
-export aggregation
+export aggregation, crud, collections
 # TODO: Re-enable when updated: diagnostic, admmgmt, client, crud, rolemgmt, freemonitoring, replication
-# export changestreams, collections, gridfs
+# export changestreams, gridfs
 
 
 
