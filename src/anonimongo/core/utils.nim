@@ -1,4 +1,4 @@
-import strformat, net
+import net
 import wire, bson, types
 
 const verbose {.booldefine.} = false
@@ -66,5 +66,21 @@ proc getWResult*(b: BsonDocument): WriteResult =
       result.errmsgs[i] = errb.ofEmbedded.errmsg
       when verbose:
         dump result.errmsgs[i]
+  when verbose:
+    dump result
+
+proc getWSingleResult*(b: BsonDocument): WriteResult =
+  ## Helper to fetch a WriteResult of kind wkSingle.
+  result = WriteResult(
+    success: b.ok,
+    kind: wkSingle
+  )
+  if "writeErrors" in b:
+    result.success = false
+    let errdocs = b["writeErrors"].ofArray
+    if errdocs.len > 0:
+      result.reason = errdocs[0].ofEmbedded.errmsg
+      when verbose:
+        dump result.reason
   when verbose:
     dump result

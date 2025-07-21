@@ -1,13 +1,12 @@
-import uri, tables, strutils, net, strformat, unicode, locks, sequtils
+import uri, tables, strutils, net, locks, sequtils
 from asyncdispatch import Port
 
 when defined(ssl):
   import openssl
 
 import sha1, nimSHA2
-import dnsclient
 
-import pool, wire, bson, multisock
+import pool, wire, bson
 
 export SHA1Digest, SHA256Digest
 
@@ -57,6 +56,7 @@ type
     pool: Pool[Socket]
     tls: bool
     authenticated: bool
+    hasUserAuth: bool
     db: string
     writeConcern: BsonDocument
     flags: QueryFlags
@@ -183,6 +183,7 @@ proc initMongo*(poolSize = poolconn): Mongo =
   result.pool = initPool[Socket](poolSize)
   result.poisoned = false
   result.authenticated = false
+  result.hasUserAuth = false
   result.tls = false
   result.primary = ""
   result.readPreference = ReadPreference.primary
@@ -210,6 +211,7 @@ proc authenticate*(m: Mongo, user, pass: string, dbname = "admin"): bool =
   if result:
     withLock m[].lock:
       m.authenticated = true
+      m.hasUserAuth = true
 
 proc close*(m: Mongo) {.raises: [].} =
   withLock m[].lock:
@@ -349,6 +351,10 @@ proc retryableWrites*(m: Mongo): bool =
   withLock m[].lock:
     result = m.retryableWrites
 
+proc hasUserAuth*(m: Mongo): bool =
+  withLock m[].lock:
+    result = m.hasUserAuth
+
 proc setReadPreference*(m: Mongo, pref: ReadPreference) =
   withLock m[].lock:
     m.readPreference = pref
@@ -435,7 +441,19 @@ proc retryableWrites*(db: Database): bool = db[].db[].retryableWrites
 proc toCursor*(doc: BsonDocument): Cursor =
   ## Convert cursor document to Cursor object
   result = cast[Cursor](allocShared0(sizeof(CursorObj)))
-  result.id = if "id" in doc: doc["id"].ofInt64 else: 0
+  
+  # Handle cursor ID - could be int32 or int64
+  if "id" in doc:
+    let idField = doc["id"]
+    if idField.kind == bkInt64:
+      result.id = idField.ofInt64
+    elif idField.kind == bkInt32:
+      result.id = int64(idField.ofInt32)
+    else:
+      result.id = 0
+  else:
+    result.id = 0
+    
   result.ns = if "ns" in doc: doc["ns"].ofString else: ""
   result.poisoned = false
   

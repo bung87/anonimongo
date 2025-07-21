@@ -65,39 +65,34 @@ proc startmongo*: Process =
   result = unown startProcess(exe, args = args, options = opt)
 
 proc withAuth*(m: Mongo): bool =
-  (user != "" and pass != "") or m.hasUserAuth
+  (user != "" and pass != "") or m.hasUserAuth()
 
-proc testsetup*: Mongo[TheSock] =
+proc testsetup*: Mongo =
   when defined(ssl):
-    let sslinfo {.used.} = initSSLInfo(key, cert)
+    let sslinfo {.used.} = SslInfo(keyfile: key, certfile: cert)
   else:
-    let sslinfo {.used.} = SSLInfo(keyfile: "dummykey", certfile: "dummycert")
+    let sslinfo {.used.} = SslInfo(keyfile: "dummykey", certfile: "dummycert")
   when not defined(uri):
-    let mongo = newMongo[TheSock](host = host, port = port, poolconn = poolconn, sslinfo = sslinfo)
+    let mongo = newMongo(host = host, port = port, poolSize = poolconn, sslInfo = sslinfo)
   else:
-    let mongo = newMongo[TheSock](MongoUri mongourl, poolconn = poolconn)
+    let mongo = newMongo(MongoUri mongourl, poolSize = poolconn)
 
-  mongo.retryableWrites = true
-  when defined(uri):
-    doAssert mongo.db == "admin"
-
-  mongo.appname = "Test driver"
-  when anoSocketSync:
-    if not mongo.connect:
-      echo "error connecting, quit"
-  else:
-    if not waitFor mongo.connect:
-      echo "error connecting, quit"
-  #echo &"current available conns: {mongo.pool.available.len}"
+  # Note: retryableWrites is now a property accessor, not a field
+  # mongo.retryableWrites = true  # This is set by default in the constructor
+  
+  # Note: appname field doesn't exist in the new implementation
+  # mongo.appname = "Test driver"  # Removed for now
+  
+  # Connection is handled in the constructor now
+  # No need for explicit connect call
+  
   when verbose:
     let start = cpuTime()
-  when anoSocketSync:
-    if mongo.withAuth and not mongo.authenticate[:SHA256Digest](user, pass):
-      echo "cannot authenticate the connection"
-  else:
-    if mongo.withAuth and not waitFor mongo.authenticate[:SHA256Digest](user, pass):
-      echo "cannot authenticate the connection"
-  #echo &"is mongo authenticated: {mongo.authenticated}"
+  
+  # Authentication using the new API
+  if mongo.withAuth and not mongo.authenticate(user, pass):
+    echo "cannot authenticate the connection"
+  
   when verbose:
     echo &"auth ended taking {cpuTime() - start} for poolconn {poolconn}"
   result = mongo

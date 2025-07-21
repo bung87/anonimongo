@@ -1,4 +1,4 @@
-import tables, locks, net, bson, auth, scram/client
+import tables, locks, net, bson
 
 export tables.pairs
 

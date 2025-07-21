@@ -161,10 +161,12 @@ proc update*(c: Collection, query = newBson([]), updates = bsonNull(),
    })
   var ordered = true
   var retryable = true
+  var isMulti = false
   for k, v in opt:
     if k == "ordered": ordered = v.ofBool
     elif k == "multi":
       retryable = false
+      isMulti = v.ofBool
       q[k] = v
     elif k == "writeConcern" and v.kind == bkInt32 and v == 0:
       retryable = false
@@ -175,7 +177,10 @@ proc update*(c: Collection, query = newBson([]), updates = bsonNull(),
   retryable = retryable and c.db.retryableWrites
   retryable.operationFor("update"):
     let doc = c.db.update(c.name, @[q], ordered = ordered)
-    result = doc.getWResult
+    if isMulti:
+      result = doc.getWResult
+    else:
+      result = doc.getWSingleResult
       
 proc remove*(c: Collection, query: BsonDocument, justone = false): WriteResult =
   ## Remove documents
@@ -239,7 +244,10 @@ proc insert*(c: Collection, docs: seq[BsonDocument], opt = newBson([])): WriteRe
 
 proc insert*(c: Collection, doc: BsonDocument): WriteResult =
   ## Insert single document
-  result = c.insert(@[doc])
+  var retryable = c.db.retryableWrites
+  retryable.operationFor("insert"):
+    let doc = c.db.insert(c.name, @[doc], true)
+    result = doc.getWSingleResult
 
 proc drop*(c: Collection, wt = bsonNull()): WriteResult =
   ## Drop collection
@@ -395,7 +403,10 @@ proc bulkWrite*(c: Collection, operations: seq[BsonDocument],
 # Convenience methods for single operations
 proc insertOne*(c: Collection, doc: BsonDocument): WriteResult =
   ## Insert one document
-  result = c.insert(doc)
+  var retryable = c.db.retryableWrites
+  retryable.operationFor("insertOne"):
+    let doc = c.db.insert(c.name, @[doc], true)
+    result = doc.getWSingleResult
 
 proc insertMany*(c: Collection, docs: seq[BsonDocument]): WriteResult =
   ## Insert many documents
@@ -407,7 +418,17 @@ proc updateOne*(c: Collection, filter: BsonDocument, update: BsonDocument,
   var opt = newBson([])
   if upsert:
     opt["upsert"] = upsert
-  result = c.update(filter, update, opt)
+  var q = bson({
+    q: filter,
+    u: update,
+  })
+  for k, v in opt:
+    var kk = k
+    q[move kk] = v
+  var retryable = c.db.retryableWrites
+  retryable.operationFor("updateOne"):
+    let doc = c.db.update(c.name, @[q], ordered = true)
+    result = doc.getWSingleResult
 
 proc updateMany*(c: Collection, filter: BsonDocument, update: BsonDocument): WriteResult =
   ## Update many documents
@@ -416,7 +437,15 @@ proc updateMany*(c: Collection, filter: BsonDocument, update: BsonDocument): Wri
 
 proc deleteOne*(c: Collection, filter: BsonDocument): WriteResult =
   ## Delete one document
-  result = c.remove(filter, justone = true)
+  let limit = 1
+  var delq = bson({
+    q: filter,
+    limit: limit
+  })
+  var retryable = c.db.retryableWrites
+  retryable.operationFor("deleteOne"):
+    let doc = c.db.delete(c.name, @[delq])
+    result = doc.getWSingleResult
 
 proc deleteMany*(c: Collection, filter: BsonDocument): WriteResult =
   ## Delete many documents

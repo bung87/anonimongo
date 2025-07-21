@@ -1,4 +1,4 @@
-import tables, net
+import tables
 import anonimongo/core/[bson, types, wire, pool]
 import anonimongo/dbops/[aggregation, crud]
 import anonimongo/[collections]
