@@ -43,7 +43,7 @@ proc replSetAbortPrimaryCatchUp*(db: Database): BsonDocument =
 proc replSetFreeze*(db: Database, seconds: int): BsonDocument =
   ## Freeze replica set member from seeking election
   result = bson({
-    "info": "unfreezing" if seconds == 0 else: &"freezing for {seconds} seconds",
+    "info": if seconds == 0: "unfreezing" else: &"freezing for {seconds} seconds",
     "ok": 1
   })
 

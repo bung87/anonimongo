@@ -1,5 +1,5 @@
 import asyncdispatch, net, tables, uri
-import osproc, sugar, unittest
+import os, osproc, sugar, unittest
 import strformat
 
 import ../src/anonimongo
@@ -13,7 +13,9 @@ const
     else: "mongod"
   key* {.strdefine.} = "d:/dev/self-signed-cert/key.pem"
   cert* {.strdefine.} = "d:/dev/self-signed-cert/cert.pem"
-  dbpath* {.strdefine.} = "d:/dev/mongodata"
+  dbpath* {.strdefine.} = 
+    when defined windows: "d:/dev/mongodata"
+    else: "/tmp/mongodata"
   filename* {.strdefine.} = ""
   saveas* {.strdefine.} = ""
   user* {.strdefine.} = "rdruffy"
@@ -24,7 +26,6 @@ const
   localhost* = host == "localhost"
   nomongod* = not defined(nomongod)
   runlocal* = localhost and nomongod
-  anoSocketSync* = defined(anoSocketSync)
 
   mongourl {.strdefine, used.} = &"mongo://{user}:{pass}@{host}:{port}/" &
     "?tlscertificateKeyfile=" &
@@ -35,12 +36,13 @@ const
 when verbose:
   import times, strformat
 
-when not anoSocketSync:
-  type TheSock* = AsyncSocket
-else:
-  type TheSock* = Socket
+type TheSock* = Socket
 
 proc startmongo*: Process =
+  # Create dbpath directory if it doesn't exist
+  if not dirExists(dbpath):
+    createDir(dbpath)
+  
   var args = @[
     "--port", $port,
     "--dbpath", dbpath,

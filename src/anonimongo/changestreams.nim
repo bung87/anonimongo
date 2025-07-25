@@ -1,9 +1,8 @@
-import asyncdispatch
 import oids
 from sequtils import concat, map, mapIt
 
-import anonimongo/core/[bson, types, wire]
-import anonimongo/dbops/[aggregation, crud]
+import ./core/[bson, types, wire]
+import ./dbops/[aggregation, crud]
 
 
 
@@ -36,12 +35,10 @@ type
     ns*: Namespace
     documentKey*: DocumentKey
 
-proc forEach*(c: Cursor[AsyncSocket], cb: proc(b: ChangeStream),
-  stopWhen: set[ChangeStreamEvent]): Future[void] {.async.} =
-  let db = c.db
-  var c = c
-  let collname = c.collname
-  #defer: asyncCheck db.killCursors(collname, @[c.id])
+proc forEach*(c: Cursor, cb: proc(b: ChangeStream),
+  stopWhen: set[ChangeStreamEvent]) =
+  var cursor = c
+  #defer: cursor.db.killCursors(cursor.ns, @[cursor.id])
   var cs: ChangeStream
   template processEntry(el, label: untyped) =
     cs = `el`.to ChangeStream
@@ -50,33 +47,33 @@ proc forEach*(c: Cursor[AsyncSocket], cb: proc(b: ChangeStream),
     if cs.operationType in stopWhen:
       break `label`
   block always:
-    while c.id != 0:
-      when csVerbose: dump db == nil
-      if db == nil: break always
-      for fbatch in c.firstBatch: processEntry fbatch, always
-      for nbatch in c.nextBatch: processEntry nbatch, always
+    while cursor.id != 0:
+      when csVerbose: dump cursor.db == nil
+      if cursor.db == nil: break always
+      for fbatch in cursor.firstBatch: processEntry fbatch, always
+      for nbatch in cursor.nextBatch: processEntry nbatch, always
       var forEachReply: BsonDocument
       try:
-        forEachReply = await db.getMore(c.id, collname, 101)
+        forEachReply = cursor.db.getMore(cursor.id, cursor.ns, 101)
       except CatchableError:
         echo getCurrentExceptionMsg()
         break always
 
-      #discard sleepAsync 1_000
+      #discard sleep 1_000
       when csVerbose: dump forEachReply
       if not forEachReply.ok:
         break always
-      c = forEachReply["cursor"].ofEmbedded.toCursor[:AsyncSocket]
+      cursor = forEachReply["cursor"].ofEmbedded.toCursor
 
 proc watch*(coll: Collection, pipelines: seq[BsonDocument] = @[],
-  options = bson()): Future[Cursor[AsyncSocket]] {.async.} =
+  options = bson()): Cursor =
   var queries = newseq[BsonDocument](pipelines.len+1)
   queries[0] = bson { "$changeStream": options }
   queries = concat(queries, pipelines)
   when csVerbose: dump queries
-  let reply = await coll.db.aggregate(coll.name, queries, maxTimeMS = 0)
+  let reply = coll.db.aggregate(coll.name, queries, maxTimeMS = 0)
   if not reply.ok:
     raise newException(MongoError, getCurrentExceptionMsg())
-  result = reply["cursor"].ofEmbedded.toCursor[:AsyncSocket]
+  result = reply["cursor"].ofEmbedded.toCursor
   result.db = coll.db
   when csVerbose: dump result

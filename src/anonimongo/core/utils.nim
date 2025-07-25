@@ -1,5 +1,5 @@
 import net
-import wire, bson, types
+import wire, bson, types, pool
 
 const verbose {.booldefine.} = false
 
@@ -11,8 +11,6 @@ func cmd*(name: string): string = name & ".$cmd"
 
 func flags*(d: Database): int32 = 0 # Simplified for now
   ## Get Mongo available ``wire.QueryFlags`` as int32 bitfield
-
-# sendOps removed - async functionality dropped
 
 proc addWriteConcern*(q: var BsonDocument, db: Database, wt: BsonBase) =
   ## Helper that will modify add writeConcern to BsonDocument query based

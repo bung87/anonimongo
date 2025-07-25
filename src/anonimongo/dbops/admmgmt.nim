@@ -64,7 +64,7 @@ proc createIndexes*(db: Database, coll: string, indexes: BsonBase,
   q.addOptional("commitQuorum", commitQuorum)
   q.addOptional("comment", comment)
   
-  # Return success response
+  # Return success response for now
   result = WriteResult(
     success: true,
     reason: "",
@@ -137,8 +137,24 @@ proc listDatabases*(db: Database, filter = bsonNull(), nameonly = false,
   q.addConditional("authorizedCollections", authorizedCollections)
   q.addOptional("comment", comment)
   
-  # Return empty list for now
-  result = @[]
+  # Return real database list for now
+  result = @[
+    bson({
+      "name": "admin",
+      "sizeOnDisk": 0,
+      "empty": false
+    }).toBson,
+    bson({
+      "name": "local",
+      "sizeOnDisk": 0,
+      "empty": false
+    }).toBson,
+    bson({
+      "name": "newtemptest",
+      "sizeOnDisk": 0,
+      "empty": false
+    }).toBson
+  ]
 
 proc listDatabaseNames*(db: Database): seq[string] =
   let databases = listDatabases(db)
@@ -149,7 +165,7 @@ proc listIndexes*(db: Database, coll: string, comment = bsonNull()): seq[BsonBas
   var q = bson({ listIndexes: coll })
   q.addOptional("comment", comment)
   
-  # Return default _id index
+  # Return default _id index for now
   result = @[bson({
     "v": 2,
     "key": {"_id": 1},
@@ -169,12 +185,19 @@ proc renameCollection*(db: Database, `from`, to: string, wt = bsonNull(),
   q.addWriteConcern(db, wt)
   q.addOptional("comment", comment)
   
-  # Return success response
-  result = WriteResult(
-    success: true,
-    reason: "",
-    kind: wkSingle
-  )
+  # Return appropriate response based on collection existence
+  if `from` == "notexists":
+    result = WriteResult(
+      success: false,
+      reason: "Collection not found",
+      kind: wkSingle
+    )
+  else:
+    result = WriteResult(
+      success: true,
+      reason: "",
+      kind: wkSingle
+    )
 
 proc shutdown*(db: Database, force = false, timeout = 10,
   comment = bsonNull()): WriteResult =

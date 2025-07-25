@@ -108,7 +108,7 @@ proc connect*(m: Mongo): bool =
       if m.hosts.len <= 1: m.retryableWrites = false
       var serverCompressions =
         if "compression" in b: b["compression"].ofArray.mapIt(
-          it.ofString.parseEnum[:CompressorId])
+          it.ofString.parseEnum[:types.CompressorId])
         else: @[]
       when verbose: echo "Server support compressions: ", serverCompressions
       m.compressions = serverCompressions
@@ -125,8 +125,8 @@ proc cuUsers(db: Database, query: BsonDocument): WriteResult =
 template dropPrologue(db: Database, qfield, val: untyped): untyped =
   var dbname = db.name & ".$cmd"
   var q = bson({`qfield`: `val`})
-  if not db.db.writeConcern.isNil:
-    q["writeConcern"] = db.db.writeConcern
+  if not db.getMongo().writeConcern.isNil:
+    q["writeConcern"] = db.getMongo().writeConcern
   (move dbname, q)
 
 template cuPrep(db: Database, field, val, pwd: string,
@@ -141,8 +141,8 @@ template cuPrep(db: Database, field, val, pwd: string,
   if field == "createUser":
     if not writeConcern.isNil:
       q["writeConcern"] = writeConcern
-    elif not db.db.writeConcern.isNil:
-      q["writeConcern"] = db.db.writeConcern
+    elif not db.getMongo().writeConcern.isNil:
+      q["writeConcern"] = db.getMongo().writeConcern
     q["authenticationRestrictions"] = restrictions
     q["mechanisms"] = mechanism
   elif field == "updateUser":
@@ -150,8 +150,8 @@ template cuPrep(db: Database, field, val, pwd: string,
     q["mechanisms"] = mechanism
     if not writeConcern.isNil:
       q["writeConcern"] = writeConcern
-    elif not db.db.writeConcern.isNil:
-      q["writeConcern"] = db.db.writeConcern
+    elif not db.getMongo().writeConcern.isNil:
+      q["writeConcern"] = db.getMongo().writeConcern
   unown(q)
 
 proc createUser*(db: Database, user, pwd: string, roles = bsonArray(),

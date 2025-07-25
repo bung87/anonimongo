@@ -1,5 +1,6 @@
-import tables, sequtils
-import ../core/[bson, types, wire, utils]
+import tables, sequtils, net
+import ../core/[bson, bsonify, types, wire, utils]
+import diagnostic
 
 ## Query and Write Operation Commands
 ## **********************************
@@ -20,7 +21,7 @@ proc find*(db: Database, coll: string, query = newBson([]), sort = bsonNull(),
   ## Find documents in collection
   ## Returns a BsonDocument with cursor information
   
-  # Create find command
+  # Create find command (similar to original)
   var cmd = bson({
     "find": coll,
     "filter": query
@@ -59,16 +60,28 @@ proc find*(db: Database, coll: string, query = newBson([]), sort = bsonNull(),
   if maxTimeMS > 0:
     cmd["maxTimeMS"] = maxTimeMS
   
-  # For now, return a stub response with empty cursor
-  # Return empty cursor response
-  result = bson({
-    "cursor": {
-      "id": 0,
-      "ns": db.name & "." & coll,
-      "firstBatch": []
-    },
-    "ok": 1
-  })
+  # Get connection from pool and send command
+  let mongo = db.getMongo()
+  let (connId, conn) = mongo.getConn()
+  if connId == -1:
+    result = bson({"ok": 0, "errmsg": "No connection available"})
+    return
+  
+  try:
+    # Use the prepare template to create the message
+    let message = prepare(cmd, db.flags, db.name & ".$cmd", connId.int32)
+    conn.socket.send message.readAll
+    
+    # Get response
+    let reply = conn.socket.getReply()
+    if reply.documents.len > 0:
+      result = reply.documents[0]
+    else:
+      result = bson({"ok": 0, "errmsg": "No response received"})
+  except:
+    result = bson({"ok": 0, "errmsg": "Socket communication error: " & getCurrentExceptionMsg()})
+  finally:
+    mongo.endConn(connId)
 
 proc getMore*(db: Database, cursorId: int64, coll: string,
              batchSize = 101, maxTimeMS = 0): BsonDocument =
@@ -109,11 +122,37 @@ proc insert*(db: Database, coll: string, docs: seq[BsonDocument],
   if bypassDocumentValidation:
     cmd["bypassDocumentValidation"] = true
   
-  # Return success response
-  result = bson({
-    "n": docs.len,
-    "ok": 1
-  })
+  # Get connection from pool and send command
+  let mongo = db.getMongo()
+  let (connId, conn) = mongo.getConn()
+  if connId == -1:
+    result = bson({"ok": 0, "errmsg": "No connection available"})
+    return
+  
+  try:
+    echo "DEBUG: Got connection ", connId, " for insert"
+    
+    # Use the prepare template to create the message
+    let message = prepare(cmd, db.flags, db.name & ".$cmd", connId.int32)
+    echo "DEBUG: Prepared message, sending..."
+    
+    conn.socket.send message.readAll
+    echo "DEBUG: Sent message"
+    
+    echo "DEBUG: Waiting for reply..."
+    # Get response
+    let reply = conn.socket.getReply()
+    echo "DEBUG: Got reply with ", reply.documents.len, " documents"
+    
+    if reply.documents.len > 0:
+      result = reply.documents[0]
+    else:
+      result = bson({"ok": 0, "errmsg": "No response received"})
+  except Exception as e:
+    echo "DEBUG: Exception: ", e.msg
+    result = bson({"ok": 0, "errmsg": "Socket communication error: " & e.msg})
+  finally:
+    mongo.endConn(connId)
 
 proc update*(db: Database, coll: string, updates: seq[BsonDocument],
             ordered = true, writeConcern = bsonNull(),
@@ -131,12 +170,28 @@ proc update*(db: Database, coll: string, updates: seq[BsonDocument],
   if bypassDocumentValidation:
     cmd["bypassDocumentValidation"] = true
   
-  # Return success response
-  result = bson({
-    "n": updates.len,
-    "nModified": updates.len,
-    "ok": 1
-  })
+  # Get connection from pool and send command
+  let mongo = db.getMongo()
+  let (connId, conn) = mongo.getConn()
+  if connId == -1:
+    result = bson({"ok": 0, "errmsg": "No connection available"})
+    return
+  
+  try:
+    # Use the prepare template to create the message
+    let message = prepare(cmd, db.flags, db.name & ".$cmd", connId.int32)
+    conn.socket.send message.readAll
+    
+    # Get response
+    let reply = conn.socket.getReply()
+    if reply.documents.len > 0:
+      result = reply.documents[0]
+    else:
+      result = bson({"ok": 0, "errmsg": "No response received"})
+  except:
+    result = bson({"ok": 0, "errmsg": "Socket communication error: " & getCurrentExceptionMsg()})
+  finally:
+    mongo.endConn(connId)
 
 proc delete*(db: Database, coll: string, deletes: seq[BsonDocument],
             ordered = true, writeConcern = bsonNull()): BsonDocument =
@@ -151,16 +206,32 @@ proc delete*(db: Database, coll: string, deletes: seq[BsonDocument],
   if not writeConcern.isNil:
     cmd["writeConcern"] = writeConcern
   
-  # Return success response
-  result = bson({
-    "n": deletes.len,
-    "ok": 1
-  })
+  # Get connection from pool and send command
+  let mongo = db.getMongo()
+  let (connId, conn) = mongo.getConn()
+  if connId == -1:
+    result = bson({"ok": 0, "errmsg": "No connection available"})
+    return
+  
+  try:
+    # Use the prepare template to create the message
+    let message = prepare(cmd, db.flags, db.name & ".$cmd", connId.int32)
+    conn.socket.send message.readAll
+    
+    # Get response
+    let reply = conn.socket.getReply()
+    if reply.documents.len > 0:
+      result = reply.documents[0]
+    else:
+      result = bson({"ok": 0, "errmsg": "No response received"})
+  except:
+    result = bson({"ok": 0, "errmsg": "Socket communication error: " & getCurrentExceptionMsg()})
+  finally:
+    mongo.endConn(connId)
 
 proc count*(db: Database, coll: string, query = newBson([]),
-           limit = 0, skip = 0, hint = bsonNull(),
-           readConcern = bsonNull(), collation = bsonNull(),
-           maxTimeMS = 0): BsonDocument =
+            limit = 0, skip = 0, hint = bsonNull(),
+            readConcern = bsonNull(), collation = bsonNull()): int =
   ## Count documents in collection
   var cmd = bson({
     "count": coll,
@@ -177,53 +248,87 @@ proc count*(db: Database, coll: string, query = newBson([]),
     cmd["readConcern"] = readConcern
   if not collation.isNil:
     cmd["collation"] = collation
-  if maxTimeMS > 0:
-    cmd["maxTimeMS"] = maxTimeMS
   
-  # Return count response
-  result = bson({
-    "n": 0,
-    "ok": 1
-  })
+  # Get connection from pool and send command
+  let mongo = db.getMongo()
+  let (connId, conn) = mongo.getConn()
+  if connId == -1:
+    result = 0
+    return
+  
+  try:
+    # Use the prepare template to create the message
+    let message = prepare(cmd, db.flags, db.name & ".$cmd", connId.int32)
+    conn.socket.send message.readAll
+    
+    # Get response
+    let reply = conn.socket.getReply()
+    if reply.documents.len > 0:
+      let response = reply.documents[0]
+      if response.ok:
+        result = response["n"].ofInt32
+      else:
+        result = 0
+    else:
+      result = 0
+  except:
+    result = 0
+  finally:
+    mongo.endConn(connId)
 
 proc findAndModify*(db: Database, coll: string, query = newBson([]),
-                   sort = bsonNull(), remove = false, update = bsonNull(),
-                   `new` = false, fields = bsonNull(), upsert = false,
-                   bypassDocumentValidation = false,
-                   writeConcern = bsonNull(), collation = bsonNull(),
-                   arrayFilters: seq[BsonDocument] = @[]): BsonDocument =
-  ## Find and modify a document
+                   sort = newBson([]), update = newBson([]),
+                   remove = false, `new` = false, fields = newBson([]),
+                   upsert = false, bypass = false, wt = bsonNull(),
+                   collation = bsonNull(), arrayFilters = newBson([])): BsonDocument =
+  ## Find and modify a single document
   var cmd = bson({
     "findAndModify": coll,
-    "query": query
+    "query": query,
+    "sort": sort
   })
   
-  if not sort.isNil:
-    cmd["sort"] = sort
+  if update.len > 0:
+    cmd["update"] = update
   if remove:
     cmd["remove"] = true
-  elif not update.isNil:
-    cmd["update"] = update
   if `new`:
     cmd["new"] = true
-  if not fields.isNil:
+  if fields.len > 0:
     cmd["fields"] = fields
   if upsert:
     cmd["upsert"] = true
-  if bypassDocumentValidation:
+  if bypass:
     cmd["bypassDocumentValidation"] = true
-  if not writeConcern.isNil:
-    cmd["writeConcern"] = writeConcern
+  if not wt.isNil:
+    cmd["writeConcern"] = wt
   if not collation.isNil:
     cmd["collation"] = collation
   if arrayFilters.len > 0:
-    cmd["arrayFilters"] = arrayFilters.map(toBson)
+    cmd["arrayFilters"] = arrayFilters
   
-  # Return response with null value (no document found)
-  result = bson({
-    "value": bsonNull(),
-    "ok": 1
-  })
+  # Get connection from pool and send command
+  let mongo = db.getMongo()
+  let (connId, conn) = mongo.getConn()
+  if connId == -1:
+    result = bson({"ok": 0, "errmsg": "No connection available"})
+    return
+  
+  try:
+    # Use the prepare template to create the message
+    let message = prepare(cmd, db.flags, db.name & ".$cmd", connId.int32)
+    conn.socket.send message.readAll
+    
+    # Get response
+    let reply = conn.socket.getReply()
+    if reply.documents.len > 0:
+      result = reply.documents[0]
+    else:
+      result = bson({"ok": 0, "errmsg": "No response received"})
+  except:
+    result = bson({"ok": 0, "errmsg": "Socket communication error: " & getCurrentExceptionMsg()})
+  finally:
+    mongo.endConn(connId)
 
 proc createIndexes*(db: Database, coll: string, indexes: BsonBase,
                    writeConcern = bsonNull()): BsonDocument =

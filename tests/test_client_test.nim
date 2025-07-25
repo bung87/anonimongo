@@ -1,22 +1,40 @@
-import unittest, osproc, os, strformat
+import unittest, osproc, os, strformat, net
 
 import utils_test
 import anonimongo
 
 var mongorun: Process
+var mongoAlreadyRunning = false
 if runlocal:
-  mongorun = startmongo()
-  sleep 3000 # waiting for mongod to be ready
+  # Check if MongoDB is already running on the port
+  let sock = newSocket()
+  defer: sock.close()
+  try:
+    sock.connect("localhost", Port(port))
+    echo "MongoDB is already running on port ", port
+    mongoAlreadyRunning = true
+  except:
+    echo "Starting MongoDB process..."
+    mongorun = startmongo()
+    sleep 3000 # waiting for mongod to be ready
+    # Additional check to ensure mongod is actually running
+    if not mongorun.running:
+      echo "MongoDB process failed to start"
+      echo "Process exit code: "
+    echo "MongoDB process started successfully"
 
 suite "Client connection and user management tests":
   test "Required mongo is running":
     if runlocal:
-      require mongorun.running
+      if mongoAlreadyRunning:
+        check true
+      else:
+        require mongorun.running
     else:
       check true
 
-  var mongo: Mongo[TheSock]
-  var db: Database[TheSock]
+  var mongo: Mongo
+  var db: Database
   var wr: WriteResult
 
   let existingDb = "temptest"
@@ -34,17 +52,11 @@ suite "Client connection and user management tests":
     require mongo != nil
     db = mongo[existingDb]
     # test looking for not existing user
-    when anoSocketSync:
-      var reply = db.usersInfo("not-exists0user")
-    else:
-      var reply = waitFor db.usersInfo("not-exists0user")
+    var reply = db.usersInfo("not-exists0user")
     check reply.ok
     check reply["users"].len == 0
 
-    when anoSocketSync:
-      reply = db.usersInfo(existingUser)
-    else:
-      reply = waitFor db.usersInfo(existingUser)
+    reply = db.usersInfo(existingUser)
     let users = reply["users"]
     when defined(existingMongoSetup):
       check users.len == 1
@@ -54,18 +66,11 @@ suite "Client connection and user management tests":
       check users.len == 0
 
   test &"Create new user: {newuser}":
-    when anoSocketSync:
-      wr = db.createUser(newuser, newuser,
-        roles = bsonArray("read"), customData = bson({ role: "testing"}))
-    else:
-      wr = waitFor db.createUser(newuser, newuser,
-        roles = bsonArray("read"), customData = bson({ role: "testing"}))
+    wr = db.createUser(newuser, newuser,
+      roles = bsonArray("read"), customData = bson({ role: "testing"}))
     wr.success.reasonedCheck("createUser error", wr.reason)
     
-    when anoSocketSync:
-      var reply = db.usersInfo(newuser)
-    else:
-      var reply = waitFor db.usersInfo(newuser)
+    var reply = db.usersInfo(newuser)
     check reply.ok
     let users = reply["users"]
     check users.len == 1
@@ -74,34 +79,21 @@ suite "Client connection and user management tests":
     check newdoc["customData"]["role"] == "testing"
 
   test &"Look for all users in {existingDb}":
-    when anoSocketSync:
-      let reply = db.usersInfo(1)
-    else:
-      let reply = waitFor db.usersInfo(1)
+    let reply = db.usersInfo(1)
     check reply.ok
     check reply["users"].len == 1
 
   test &"No added {newuser} to admin database":
-    when anoSocketSync:
-      let reply = db.usersInfo(bson {
-        user: newuser, db: "admin",
-      })
-    else:
-      let reply = waitFor db.usersInfo(bson {
-        user: newuser, db: "admin",
-      })
+    let reply = db.usersInfo(bson {
+      user: newuser, db: "admin",
+    })
     check reply.ok
     check reply["users"].len == 0
 
-  test &"Check info of the connected user {db.db.username}":
-    when anoSocketSync:
-      let reply = db.usersInfo(bson {
-        user: db.db.username, db: "admin"
-      })
-    else:
-      let reply = waitFor db.usersInfo(bson {
-        user: db.db.username, db: "admin"
-      })
+  test &"Check info of the connected user admin":
+    let reply = db.usersInfo(bson {
+      user: "admin", db: "admin"
+    })
     check reply.ok
     let users = reply["users"]
 
@@ -116,19 +108,12 @@ suite "Client connection and user management tests":
       check users.len == 0
 
   test &"Grant roles to {newuser}":
-    when anoSocketSync:
-      wr = db.grantRolesToUser(newuser,
-        roles = bsonArray("readWrite"))
-    else:
-      wr = waitFor db.grantRolesToUser(newuser,
-        roles = bsonArray("readWrite"))
+    wr = db.grantRolesToUser(newuser,
+      roles = bsonArray("readWrite"))
     wr.success.reasonedCheck("grantRolesToUser error", wr.reason)
 
   proc checkUserRoles(checkRoles: seq[string]) {.used.} =
-    when anoSocketSync:
-      var reply = db.usersInfo(newuser)
-    else:
-      var reply = waitFor db.usersInfo(newuser)
+    var reply = db.usersInfo(newuser)
     check reply.ok
     let users = reply["users"]
     check users.len == 1
@@ -142,48 +127,35 @@ suite "Client connection and user management tests":
     checkUserRoles @["read", "readWrite"]
 
   test &"Revoke roles to {newuser}":
-    when anoSocketSync:
-      wr = db.revokeRolesFromUser(newuser,
-        roles = bsonArray("read", "readWrite"))
-    else:
-      wr = waitFor db.revokeRolesFromUser(newuser,
-        roles = bsonArray("read", "readWrite"))
+    wr = db.revokeRolesFromUser(newuser,
+      roles = bsonArray("read", "readWrite"))
     wr.success.reasonedCheck("revokeRolesFromUser error", wr.reason)
 
   test &"Check newly revoked roles to {newuser}":
     checkUserRoles @[]
 
   test &"Update {newuser}":
-    when anoSocketSync:
-      wr = db.updateUser(newuser, newuser,
-        roles = bsonArray("read"))
-    else:
-      wr = waitFor db.updateUser(newuser, newuser,
-        roles = bsonArray("read"))
+    wr = db.updateUser(newuser, newuser,
+      roles = bsonArray("read"))
     wr.success.reasonedCheck("updateUser error", wr.reason)
 
   test &"Check newly updated roles to {newuser}":
     checkUserRoles @["read"]
 
   test &"Delete/drop the {newuser}":
-    when anoSocketSync:
-      wr = db.dropUser(newuser)
-    else:
-      wr = waitFor db.dropUser(newuser)
+    wr = db.dropUser(newuser)
     wr.success.reasonedCheck("dropUser error", wr.reason)
 
   test "Shutdown mongo":
     if runlocal:
       require mongo != nil
-      when anoSocketSync:
-        wr = mongo.shutdown(timeout = 10)
-      else:
-        wr = waitFor mongo.shutdown(timeout = 10)
+      wr = db.shutdown(timeout = 10)
       check wr.success
     else:
       skip()
 
-  if runlocal:
-    if mongorun.running: kill mongorun
+  if runlocal and not mongoAlreadyRunning:
+    if mongorun.running: 
+      kill mongorun
     close mongorun
   close mongo

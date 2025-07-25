@@ -1,13 +1,11 @@
 import streams, strformat, strutils
-import asyncdispatch, asyncnet, net
+import  net
 from sugar import dump
-import bson
+import bson, bsonify
 import streamable
-
-
 import supersnappy, zippy
 
-export streams, asyncnet, asyncdispatch
+export streams
 
 const verbose {.booldefine.} = false
 
@@ -186,7 +184,7 @@ template prepare*(q: BsonDocument, flags: int32, dbname: string,
   id = 0, skip = 0, limit = 1, compression = cidNoop): untyped =
   var s = newStringStream()
   discard s.prepareQuery(id, 0, opQuery.int32, flags, dbname, skip,
-    limit, q, compression = compression)
+    limit, q, bson(), compression)
   unown(s)
 
 proc ok*(b: BsonDocument): bool =
@@ -244,15 +242,25 @@ proc look*(reply: ReplyFormat) =
     for d in reply.documents:
       dump d
     
-proc getReply*(socket: AsyncSocket): Future[ReplyFormat] {.async.} =
-  ## Get data from socket and apply the replyParse into the result.
-  var bstrhead = newStringStream(await socket.recv(size = 16))
+proc getReply*(socket: Socket): ReplyFormat {.gcsafe.} =
+  ## Get data from socket synchronously and apply the replyParse into the result.
+  var headerBuffer: array[16, char]
+  let headerBytes = socket.recv(addr headerBuffer[0], 16)
+  if headerBytes != 16:
+    raise newException(IOError, "Failed to read response header")
+  
+  var bstrhead = newStringStream($headerBuffer)
   let msghdr = msgHeaderFetch bstrhead
   when verbose:
     dump msghdr
   let bytelen = msghdr.messageLength
-  var rest = await socket.recv(size = bytelen-16)
-  var restStream = newStringStream move(rest)
+  
+  var bodyBuffer = newString(bytelen - 16)
+  let bodyBytes = socket.recv(addr bodyBuffer[0], bytelen - 16)
+  if bodyBytes != bytelen - 16:
+    raise newException(IOError, "Failed to read response body")
+  
+  var restStream = newStringStream(bodyBuffer)
   if msghdr.opCode == opReply.int32:
     result = replyParse restStream
   elif msghdr.opCode == opMsg.int32:
@@ -268,7 +276,7 @@ proc getReply*(socket: AsyncSocket): Future[ReplyFormat] {.async.} =
     of cidZlib:
       origmsg = zippy.uncompress(restStream.readAll.bytes).stringbytes
     else:
-      return # do nothing
+      raise newException(IOError, "Unsupported compression")
     var msg = newStream origmsg
     if oriopcode == opReply.int32:
       result = replyParse msg

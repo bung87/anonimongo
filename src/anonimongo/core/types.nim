@@ -473,3 +473,26 @@ proc toCursor*(doc: BsonDocument): Cursor =
 
 # Helper to convert MongoUri from string
 proc `$`*(uri: MongoUri): string = uri.string
+
+# # Getter and setter functions for unexported fields
+proc compressions*(m: Mongo): seq[CompressorId] = m[].compressions
+proc `compressions=`*(m: Mongo, val: seq[CompressorId]) = m[].compressions = val
+
+proc query*(m: Mongo): TableRef[string, seq[string]] = m[].query
+proc `query=`*(m: Mongo, val: TableRef[string, seq[string]]) = m[].query = val
+
+proc primary*(m: Mongo): string = m[].primary
+proc `primary=`*(m: Mongo, val: string) = m[].primary = val
+
+proc hosts*(m: Mongo): seq[string] = m[].hosts
+proc `hosts=`*(m: Mongo, val: seq[string]) = m[].hosts = val
+
+proc db*(m: Mongo): string = m[].db
+proc `db=`*(m: Mongo, val: string) = m[].db = val
+
+proc writeConcern*(m: Mongo): BsonDocument = m[].writeConcern
+proc `writeConcern=`*(m: Mongo, val: BsonDocument) = m[].writeConcern = val
+
+proc `retryableWrites=`*(m: Mongo, val: bool) = m[].retryableWrites = val
+
+proc getMongo*(db: Database): Mongo = db[].db

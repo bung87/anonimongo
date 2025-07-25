@@ -2,7 +2,7 @@ import sequtils, strformat
 import sugar
 
 import dbops/[admmgmt, aggregation, crud]
-import core/[bson, types, utils, wire]
+import core/[bson, types, utils]
 
 {.warning[UnusedImport]: off.}
 
@@ -135,8 +135,12 @@ proc findAndModify*(c: Collection, query = newBson([]), sort = bsonNull(),
   upsert = false, bypass = false, wt = bsonNull(), collation = bsonNull(),
   arrayFilters: seq[BsonDocument] = @[]): BsonDocument =
   ## Find and modify a document
-  let doc = c.db.findAndModify(c.name, query, sort, remove, update, `new`,
-    fields, upsert, bypass, wt, collation, arrayFilters)
+  let doc = c.db.findAndModify(c.name, query, 
+    if sort.isNil: newBson([]) else: sort.ofEmbedded,
+    if update.isNil: newBson([]) else: update.ofEmbedded,
+    remove, `new`,
+    if fields.isNil: newBson([]) else: fields.ofEmbedded,
+    upsert, bypass, wt, collation, newBson([]))
   result = doc["value"].ofEmbedded
 
 template operationFor(doIt: bool, label: string, op: untyped): untyped =
